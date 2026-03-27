@@ -1,1 +1,50 @@
-import pytest\nfrom code_tutorial_builder.parser import CodeParser\nfrom code_tutorial_builder.config import Config\n\nclass TestCodeParser:\n    \"\"\"Tests for CodeParser class.\"\"\"\n    \n    def setup_method(self):\n        self.config = Config(steps=5)\n        self.parser =  CodeParser(self.config)\n    \n    def test_parse_simple_function(self):\n        \"\"\"Test parsing a simple function.\"\"\"\n        code = \"\"\"\ndef hello():\n    print('Hello, world!')\n\"\"\"\n        result = self.parser.parse(code)\n        assert len(result['functions']) == 1\n        assert result['functions'][0]['name'] == 'hello'\n        assert 'print' in result['functions'][0]['body']\n    \n    def test_parse_class(self):\n        \"\"\"Test parsing a class.\"\"\"\n        code = \"\"\"\nclass MyClass:\n    def __init__(self):\n        self.x = 5\n    \n    def method(self):\n        return self.x\n\"\"\"\n        result = CodeParser(self.config).parse(code)\n        assert len(result['classes']) == 1\n        assert result['classes'][0]['name'] == 'MyClass'\n        assert len(result['classes'][0]['methods']) == 2\n    \n    def test_parse_imports(self):\n        \"\"\"Test parsing imports.\"\"\"\n        code = \"\"\"\nimport os\nfrom sys import argv\n\"\"\"\n        result = CodeParser(self.config). ast.parse(code)\n        assert len(result['imports']) == 2\n        assert 'os' in result['imports'][0]\n        assert 'argv' in result['imports'][1]\n    \n    def test_parse_invalid_syntax(self):\n        \"\"\"Test that invalid syntax raises ValueError.\"\"\"\n        code = \"def broken(:\"\n        with pytest.raises(ValueError):\n            CodeParser(self.config).parse(code)
+import pytest
+from code_tutorial_builder.parser import CodeParser
+from code_tutorial_builder.config import Config
+
+class TestCodeParser:
+    """Tests for CodeParser class."""
+    
+    def setup_method(self):
+        self.config = Config(steps=5)
+        self.parser = CodeParser(self.config)
+    
+    def test_parse_simple_function(self):
+        """Test parsing a simple function."""
+        code = """def hello():
+    print('Hello, world!')
+"""
+        result = self.parser.parse(code)
+        assert len(result['functions']) == 1
+        assert result['functions'][0]['name'] == 'hello'
+        assert 'print' in result['functions'][0]['body']
+    
+    def test_parse_class(self):
+        """Test parsing a class."""
+        code = """class MyClass:
+    def __init__(self):
+        self.x = 5
+    
+    def method(self):
+        return self.x
+"""
+        result = self.parser.parse(code)
+        assert len(result['classes']) == 1
+        assert result['classes'][0]['name'] == 'MyClass'
+        assert len(result['classes'][0]['methods']) == 2
+    
+    def test_parse_imports(self):
+        """Test parsing imports."""
+        code = """import os
+from sys import argv
+"""
+        result = self.parser.parse(code)
+        assert len(result['imports']) == 2
+        assert 'os' in result['imports'][0]
+        assert 'argv' in result['imports'][1]
+    
+    def test_parse_invalid_syntax(self):
+        """Test that invalid syntax raises ValueError."""
+        code = "def broken(:"
+        with pytest.raises(ValueError):
+            self.parser.parse(code)

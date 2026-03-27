@@ -1,1 +1,46 @@
-import pytest\nfrom code_tutorial_builder.generator import TutorialGenerator\nfrom code_tutorial_builder.config import Config\nfrom code_tutorial_builder.parser import CodeParser\n\nclass TestTutorialGenerator:\n    \"\"\"Tests for TutorialGenerator class.\"\"\"\n    \n    \n    def setup_method(self):\n        self.config = Config(steps=5)\n        self.generator = TutorialGenerator(self.config)\n        self.parser = CodeParser(self.config)\n    \n    def test_generate_simple_tutorial(self):\n        \"\"\"Test generating a simple tutorial.\"\"\"\n        code = \"\"\"\ndef factorial(n):\n    if n == 0:\n        return 1\n    else:\n        return n * factorial(n-1)\n\"\"\"\n        parsed = self.parser.parse(code)\n        tutorial = self.generator.generate(parsed)\n        assert \"factorial\" in tutorial\n        assert \"step\" in tutorial.lower()\n        assert len(tutorial) > 100  # Reasonable length check\n    \n    \n    def test_generate_with_custom_template(self):\n        \"\"\"Test generating with a custom template.\"\"\"\n        # This test would require a template file, so we'll skip for now\n        pytest.skip(\"Requires template file\")
+import pytest
+from code_tutorial_builder.generator import TutorialGenerator
+from code_tutorial_builder.config import Config
+from code_tutorial_builder.parser import CodeParser
+
+class TestTutorialGenerator:
+    """Tests for TutorialGenerator class."""
+    
+    def setup_method(self):
+        self.config = Config(steps=5)
+        self.generator = TutorialGenerator(self.config)
+        self.parser = CodeParser(self.config)
+    
+    def test_generate_simple_tutorial(self):
+        """Test generating a simple tutorial."""
+        code = """def factorial(n):
+    if n == 0:
+        return 1
+    else:
+        return n * factorial(n-1)
+"""
+        parsed = self.parser.parse(code)
+        tutorial = self.generator.generate(parsed)
+        assert "factorial" in tutorial
+        assert "step" in tutorial.lower()
+        assert len(tutorial) > 100  # Reasonable length check
+    
+    def test_generate_with_custom_template(self, tmp_path):
+        """Test generating with a custom template."""
+        # Create a temporary template file
+        template_content = "# Custom Template\n\n{% for step in steps %}\n- {{ step.title }}\n{% endfor %}"
+        template_file = tmp_path / "custom.md.j2"
+        template_file.write_text(template_content)
+        
+        config = Config(steps=5, template=str(template_file))
+        generator = TutorialGenerator(config)
+        parser = CodeParser(config)
+        
+        code = """def hello():
+    print('Hello')
+"""
+        parsed = parser.parse(code)
+        tutorial = generator.generate(parsed)
+        
+        assert "Custom Template" in tutorial
+        assert "hello" in tutorial
