@@ -22,7 +22,17 @@ For development (includes pytest):
 pip install -e ".[dev]"
 ```
 
+## Quick Start
+
+```bash
+./run.sh path/to/file.py
+```
+
+This handles everything — creates a virtualenv on first run, installs dependencies, and generates the tutorial. The output is saved alongside the input file (e.g. `file_tutorial.md`).
+
 ## Usage
+
+For more control, use the module directly:
 
 ```bash
 python -m code_tutorial_builder --input example.py --output tutorial.md --steps 5
