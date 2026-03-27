@@ -1,1 +1,43 @@
-def factorial(n):\n    \"\"\"Calculate factorial recursively.\"\"\"\n    if n == 0:\n        return 1\n    else:\n        return n * factorial(n-1)\n\n\ndef fibonacci(n):\n    \"\"\"Calculate nth Fibonacci number.\"\"\"\n    if n <= 1:\n        return n\n    else:\n        return fibonacci(n-1) + fibonacci(n-2)\n\n\nclass Calculator:\n    \"\"\"A simple calculator class.\"\"\"\n    \n    def __init__(self):\n        self.history = []\n    \n    def add(self, a, b):\n        \"\"\"Add two numbers.\"\"\"\n        result = a + b\n        self.history.append(f\"{a} + {b} = {result}\")\n        return result\n    \n    def multiply(self, a, b):\n        \"\"\"\"Multiply two numbers.\"\"\"\n        result = a * b\n        self.py
+def factorial(n):
+    """Calculate factorial recursively."""
+    if n == 0:
+        return 1
+    else:
+        return n * factorial(n - 1)
+
+
+def fibonacci(n):
+    """Calculate nth Fibonacci number."""
+    if n <= 1:
+        return n
+    else:
+        return fibonacci(n - 1) + fibonacci(n - 2)
+
+
+class Calculator:
+    """A simple calculator class."""
+
+    def __init__(self):
+        self.history = []
+
+    def add(self, a, b):
+        """Add two numbers."""
+        result = a + b
+        self.history.append(f"{a} + {b} = {result}")
+        return result
+
+    def multiply(self, a, b):
+        """Multiply two numbers."""
+        result = a * b
+        self.history.append(f"{a} * {b} = {result}")
+        return result
+
+
+if __name__ == "__main__":
+    print(factorial(5))
+    print(fibonacci(10))
+
+    calc = Calculator()
+    print(calc.add(3, 4))
+    print(calc.multiply(5, 6))
+    print(calc.history)

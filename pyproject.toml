@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "code-tutorial-builder"
+version = "0.1.0"
+description = "Convert working code into step-by-step lessons with explanations and runnable examples"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+dependencies = [
+    "click>=8.0",
+    "jinja2>=3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+code-tutorial-builder = "code_tutorial_builder.__main__:main"
+
+[tool.setuptools.package-data]
+code_tutorial_builder = ["templates/*.j2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,1 +1,61 @@
-# Code Tutorial Builder\n\nA tool that converts working code into step-by-step lessons with explanations and runnable examples.\n\n## Features\n\n- Parse Python source files and extract code blocks\n- Generate step-by-step tutorials with explanations\n- Support for custom lesson templates\n- Output in Markdown format for easy sharing\n- Configurable step granularity\n\n## Installation\n\n```bash\npip install -r requirements.txt\n```\n\n## Usage\n\n```bash\npython -m code_tutorial_builder --input example.py --output tutorial.md --steps 5\n```\n\n## Example\n\nGiven a Python file `example.py`:\n\n```python\ndef factorial(n):\n    if n == 0:\n        return 1\n    else:\n        return n * factorial(n-1)\n\nresult = factorial(5)\nprint(result)\n```\n\nThe tool will generate a tutorial with steps:\n1. Understanding the factorial function\n2. Base case: n == 0\n3. Recursive case: n * factorial(n-1)\n4. Calling the function\n5. Printing the result\n\n## Development\n\n```bash\npython -m pytest tests/\n```\n\n## License\n\nMIT
+# Code Tutorial Builder
+
+A tool that converts working code into step-by-step lessons with explanations and runnable examples.
+
+## Features
+
+- Parse Python source files and extract code blocks
+- Generate step-by-step tutorials with explanations
+- Support for custom lesson templates
+- Output in Markdown format for easy sharing
+- Configurable step granularity
+
+## Installation
+
+```bash
+pip install .
+```
+
+For development (includes pytest):
+
+```bash
+pip install -e ".[dev]"
+```
+
+## Usage
+
+```bash
+python -m code_tutorial_builder --input example.py --output tutorial.md --steps 5
+```
+
+## Example
+
+Given a Python file `example.py`:
+
+```python
+def factorial(n):
+    if n == 0:
+        return 1
+    else:
+        return n * factorial(n-1)
+
+result = factorial(5)
+print(result)
+```
+
+The tool will generate a tutorial with steps:
+1. Understanding the factorial function
+2. Base case: n == 0
+3. Recursive case: n * factorial(n-1)
+4. Calling the function
+5. Printing the result
+
+## Development
+
+```bash
+python -m pytest tests/
+```
+
+## License
+
+MIT
