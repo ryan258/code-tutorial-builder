@@ -1,0 +1,1 @@
+# {{ title }}\n\n## Overview\n\nThis tutorial will guide you through the code step by step.\n\n## Steps\n\n{% for step in steps %}\n### Step {{ loop.index }}: {{ step.title }}\n\n{{ step.description }}\n\n```python\n{{ step.code }}\n```\n\n{% endfor %}\n\n## Summary\n\nYou've learned how this code works step by step!

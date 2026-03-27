@@ -1,0 +1,1 @@
+class TutorialBuilderError(Exception):\n    \"\"\"Base exception for tutorial builder errors.\"\"\"\n    \post_init__(self):\n        if self.steps < 1:\n            raise ValueError(\"Number of steps must be at least 1\")

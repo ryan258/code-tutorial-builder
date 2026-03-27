@@ -1,0 +1,1 @@
+from dataclasses import dataclass\nfrom typing import Optional\n\n@dataclass\nclass Config:\n    \"\"\"Configuration for tutorial generation.\"\"\"\n    steps: int = 5\n    template: Optional[str] = None\n    \n    def __post_init__(self):\n        if self.steps < 1:\n            steps = truncated
