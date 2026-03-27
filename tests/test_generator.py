@@ -1,7 +1,7 @@
 import pytest
 from code_tutorial_builder.generator import TutorialGenerator
 from code_tutorial_builder.config import Config
-from code_tutorial_builder.parser import CodeParser
+from code_tutorial_builder.parser import PythonParser
 
 
 class TestTutorialGenerator:
@@ -10,7 +10,7 @@ class TestTutorialGenerator:
     def setup_method(self):
         self.config = Config(steps=5)
         self.generator = TutorialGenerator(self.config)
-        self.parser = CodeParser()
+        self.parser = PythonParser()
 
     def test_generate_simple_tutorial(self):
         code = (
@@ -57,6 +57,173 @@ class TestTutorialGenerator:
         generator = TutorialGenerator(config)
         parsed = self.parser.parse(code)
         tutorial = generator.generate(parsed)
-
-        # Only 2 of the 4 functions should appear as steps
         assert tutorial.count("### Step") == 2
+
+    def test_python_code_fence(self):
+        code = "x = 1\n"
+        parsed = self.parser.parse(code)
+        tutorial = self.generator.generate(parsed)
+        assert "```python" in tutorial
+
+    def test_language_aware_go_vocabulary(self):
+        parsed = {
+            "functions": [{"name": "main", "body": "func main() {}", "args": [], "docstring": None}],
+            "classes": [{"name": "Server", "body": "type Server struct{}", "methods": [], "docstring": None, "kind": "type"}],
+            "imports": ['import "fmt"'],
+            "main_code": "",
+            "language": "go",
+        }
+        tutorial = self.generator.generate(parsed)
+        assert "```go" in tutorial
+        assert "Importing Packages" in tutorial
+        assert "type" in tutorial
+
+    def test_language_aware_rust_vocabulary(self):
+        parsed = {
+            "functions": [],
+            "classes": [{"name": "Point", "body": "struct Point {}", "methods": [], "docstring": None, "kind": "struct"}],
+            "imports": ["use std::io;"],
+            "main_code": "",
+            "language": "rust",
+        }
+        tutorial = self.generator.generate(parsed)
+        assert "```rust" in tutorial
+        assert "struct" in tutorial
+        assert "Importing Crates" in tutorial
+
+    def test_docstring_used_as_description(self):
+        code = 'def greet():\n    """Say hello to everyone."""\n    print("hi")\n'
+        parsed = self.parser.parse(code)
+        tutorial = self.generator.generate(parsed)
+        assert "Say hello to everyone." in tutorial
+
+    def test_default_template_reads_like_a_lesson(self):
+        code = (
+            "def factorial(n):\n"
+            "    if n == 0:\n"
+            "        return 1\n"
+            "    return n * factorial(n - 1)\n"
+        )
+        parsed = self.parser.parse(code)
+        tutorial = self.generator.generate(parsed, title="Factorial Tutorial")
+
+        assert "# Factorial Tutorial" in tutorial
+        assert "## Big Idea" in tutorial
+        assert "## Warm-Up" in tutorial
+        assert "## Key Vocabulary" in tutorial
+        assert "## What You'll Learn" in tutorial
+        assert "## Teaching Tips" in tutorial
+        assert "## Checks for Understanding" in tutorial
+        assert "## Extension Challenge" in tutorial
+        assert "**Look For**" in tutorial
+        assert "**Ask Your Students**" in tutorial
+        assert "**Try It**" in tutorial
+        assert "recursion" in tutorial.lower()
+        assert "\\n" not in tutorial
+
+    def test_generate_with_ai_client(self):
+        class FakeAIClient:
+            def rewrite_steps(self, language, steps):
+                assert language == "python"
+                return [
+                    {
+                        **steps[0],
+                        "title": "AI import step",
+                        "description": "AI-generated explanation.",
+                    }
+                ]
+
+        parsed = {
+            "functions": [],
+            "classes": [],
+            "imports": ["import os"],
+            "main_code": "",
+            "language": "python",
+        }
+        config = Config(steps=5, use_ai=True)
+        generator = TutorialGenerator(config, ai_client=FakeAIClient())
+
+        tutorial = generator.generate(parsed)
+
+        assert "AI import step" in tutorial
+        assert "AI-generated explanation." in tutorial
+
+    def test_custom_title(self):
+        code = "x = 1\n"
+        parsed = self.parser.parse(code)
+        tutorial = self.generator.generate(parsed, title="My Custom Title")
+        assert "# My Custom Title" in tutorial
+
+    def test_main_code_preserved_when_truncating(self):
+        """Main code step should be kept even when truncating functions."""
+        code = (
+            "def a():\n    pass\n\n"
+            "def b():\n    pass\n\n"
+            "def c():\n    pass\n\n"
+            "x = 1\n"
+        )
+        config = Config(steps=2)
+        generator = TutorialGenerator(config)
+        parsed = self.parser.parse(code)
+        tutorial = generator.generate(parsed)
+        assert "x = 1" in tutorial
+        assert tutorial.count("### Step") == 2
+
+    def test_generate_with_ai_requires_credentials(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        parsed = self.parser.parse("x = 1\n")
+        generator = TutorialGenerator(Config(steps=5, use_ai=True))
+
+        with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
+            generator.generate(parsed)
+
+    def test_default_template_uses_real_newlines(self):
+        parsed = self.parser.parse("x = 1\n")
+        tutorial = self.generator.generate(parsed, title="Line Break Check")
+
+        assert "# Line Break Check\n\n## Big Idea" in tutorial
+
+    def test_steps_follow_source_order_for_mixed_definitions(self):
+        code = (
+            "class Greeter:\n"
+            "    def greet(self):\n"
+            "        return 'hi'\n"
+            "\n"
+            "def build_message(name):\n"
+            "    return name\n"
+        )
+        parsed = self.parser.parse(code)
+
+        tutorial = self.generator.generate(parsed, title="Ordering Check")
+
+        class_index = tutorial.index("Understanding the Greeter class")
+        function_index = tutorial.index("Understanding the build_message function")
+        assert class_index < function_index
+
+    def test_at_a_glance_reads_like_teacher_planning_notes(self):
+        code = (
+            "def factorial(n):\n"
+            "    if n == 0:\n"
+            "        return 1\n"
+            "    return n * factorial(n - 1)\n"
+        )
+        parsed = self.parser.parse(code)
+
+        tutorial = self.generator.generate(parsed, title="Planning Notes")
+
+        assert "Suggested level:" in tutorial
+        assert "Estimated pacing:" in tutorial
+        assert "Core concepts:" in tutorial
+
+    def test_main_execution_prompts_prefer_program_calls_over_builtins(self):
+        parsed = self.parser.parse(
+            "def greet(name):\n"
+            "    return name\n\n"
+            "print(greet('Ada'))\n"
+        )
+
+        tutorial = self.generator.generate(parsed, title="Builtin Filter")
+
+        assert "calling `greet`." in tutorial
+        assert "explains the behavior of `greet`" in tutorial

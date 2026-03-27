@@ -1,12 +1,12 @@
 import pytest
-from code_tutorial_builder.parser import CodeParser
+from code_tutorial_builder.parser import PythonParser
 
 
-class TestCodeParser:
-    """Tests for CodeParser class."""
+class TestPythonParser:
+    """Tests for PythonParser class."""
 
     def setup_method(self):
-        self.parser = CodeParser()
+        self.parser = PythonParser()
 
     def test_parse_simple_function(self):
         code = "def hello():\n    print('Hello, world!')\n"
@@ -14,6 +14,15 @@ class TestCodeParser:
         assert len(result['functions']) == 1
         assert result['functions'][0]['name'] == 'hello'
         assert 'print' in result['functions'][0]['body']
+
+    def test_class_has_kind_field(self):
+        code = (
+            "class MyClass:\n"
+            "    def method(self):\n"
+            "        pass\n"
+        )
+        result = self.parser.parse(code)
+        assert result['classes'][0]['kind'] == 'class'
 
     def test_parse_class(self):
         code = (
@@ -89,3 +98,19 @@ class TestCodeParser:
         code = 'def greet():\n    """Say hello."""\n    print("hi")\n'
         result = self.parser.parse(code)
         assert result['functions'][0]['docstring'] == 'Say hello.'
+
+    def test_source_line_metadata(self):
+        code = (
+            "class Greeter:\n"
+            "    pass\n"
+            "\n"
+            "def greet(name):\n"
+            "    return name\n"
+        )
+        result = self.parser.parse(code)
+        assert result["classes"][0]["source_line"] == 1
+        assert result["functions"][0]["source_line"] == 4
+
+    def test_language_field(self):
+        result = self.parser.parse("x = 1\n")
+        assert result['language'] == 'python'

@@ -1,1 +1,83 @@
-# {{ title }}\n\n## Overview\n\nThis tutorial will guide you through the code step by step.\n\n## Steps\n\n{% for step in steps %}\n### Step {{ loop.index }}: {{ step.title }}\n\n{{ step.description }}\n\n```python\n{{ step.code }}\n```\n\n{% endfor %}\n\n## Summary\n\nYou've learned how this code works step by step!
+# {{ title }}
+
+## Big Idea
+
+{{ overview }}
+
+## At a Glance
+
+{% for stat in lesson_stats -%}
+- {{ stat }}
+{% endfor %}
+
+## Warm-Up
+
+{{ warm_up }}
+
+{% if vocabulary %}
+## Key Vocabulary
+
+{% for item in vocabulary -%}
+- {{ item }}
+{% endfor %}
+
+{% endif %}
+## What You'll Learn
+
+{% for goal in learning_goals -%}
+- {{ goal }}
+{% endfor %}
+
+## Teaching Tips
+
+{% for tip in teaching_tips -%}
+- {{ tip }}
+{% endfor %}
+
+## Steps
+
+{% for step in steps %}
+### Step {{ loop.index }}: {{ step.title }}
+
+{{ step.description }}
+
+**Focus**
+
+{{ step.spotlight }}
+
+**Look For**
+
+{% for point in step.key_points -%}
+- {{ point }}
+{% endfor %}
+
+**Ask Your Students**
+
+{% for prompt in step.prompts -%}
+- {{ prompt }}
+{% endfor %}
+
+```{{ code_fence_lang | default('python') }}
+{{ step.code }}
+```
+
+**Try It**
+
+{{ step.practice }}
+
+{% endfor %}
+## Checks for Understanding
+
+{% for question in checks_for_understanding -%}
+- {{ question }}
+{% endfor %}
+
+## Extension Challenge
+
+{{ extension_challenge }}
+
+## Recap
+
+{% for point in recap_points -%}
+- {{ point }}
+{% endfor %}

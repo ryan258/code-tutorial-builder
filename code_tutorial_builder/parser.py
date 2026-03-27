@@ -1,11 +1,13 @@
 import ast
 from typing import List, Dict, Any
 
+from .languages._base import ParseResult
 
-class CodeParser:
+
+class PythonParser:
     """Parse Python code into structured components."""
 
-    def parse(self, code: str) -> Dict[str, Any]:
+    def parse(self, code: str) -> ParseResult:
         """
         Parse Python code into components.
 
@@ -48,7 +50,7 @@ class CodeParser:
             if i in occupied:
                 continue
             stripped = line.strip()
-            if stripped and not stripped.startswith('#'):
+            if stripped and not stripped.startswith('#') and not stripped.startswith('//'):
                 main_lines.append(line)
 
         return {
@@ -56,6 +58,7 @@ class CodeParser:
             'classes': classes,
             'imports': imports,
             'main_code': '\n'.join(main_lines),
+            'language': 'python',
         }
 
     # ------------------------------------------------------------------
@@ -85,6 +88,7 @@ class CodeParser:
             'body': self._extract_source(node, lines),
             'args': [arg.arg for arg in node.args.args],
             'docstring': ast.get_docstring(node),
+            'source_line': node.lineno,
         }
 
     def _parse_class(self, node: ast.ClassDef, lines: List[str]) -> Dict[str, Any]:
@@ -99,4 +103,6 @@ class CodeParser:
             'body': self._extract_source(node, lines),
             'methods': methods,
             'docstring': ast.get_docstring(node),
+            'kind': 'class',
+            'source_line': node.lineno,
         }

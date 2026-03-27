@@ -2,12 +2,14 @@
 set -euo pipefail
 
 if [ $# -eq 0 ]; then
-    echo "Usage: ./start.sh <path/to/file.py>" >&2
+    echo "Usage: ./run.sh <path/to/file> [extra code-tutorial-builder args...]" >&2
     exit 1
 fi
 
 INPUT="$1"
-OUTPUT="${INPUT%.py}_tutorial.md"
+BASH_ARGS=("${@:2}")
+BASENAME="${INPUT%.*}"
+OUTPUT="${BASENAME}_tutorial.md"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/.venv"
@@ -16,10 +18,10 @@ VENV_DIR="$SCRIPT_DIR/.venv"
 if [ ! -d "$VENV_DIR" ]; then
     echo "First run — setting up environment..."
     python3 -m venv "$VENV_DIR"
-    "$VENV_DIR/bin/pip" install -q "$SCRIPT_DIR"
+    "$VENV_DIR/bin/pip" install -q "$SCRIPT_DIR[multilang]"
 fi
 
-"$VENV_DIR/bin/python" -m code_tutorial_builder -i "$INPUT" -o "$OUTPUT" -v
+"$VENV_DIR/bin/python" -m code_tutorial_builder -i "$INPUT" -o "$OUTPUT" -v "${BASH_ARGS[@]}"
 
 echo ""
 echo "Tutorial: $OUTPUT"
