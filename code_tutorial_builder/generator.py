@@ -40,7 +40,10 @@ class TutorialGenerator:
     def generate(self, parsed_code: ParseResult, title: str = "Code Tutorial") -> str:
         language = parsed_code.get("language", "python")
         profile = get_profile(language)
-        graph = analyze(parsed_code, profile)
+        graph = analyze(
+            parsed_code, profile,
+            method_split_threshold=self.config.method_split_threshold,
+        )
 
         steps = self._create_steps(parsed_code, profile, graph)
         if self.config.use_ai:
@@ -140,12 +143,61 @@ class TutorialGenerator:
             components_by_name[cls["name"]] = ("class", cls)
 
         for name in graph.dependency_order:
+            comp = graph.get_component(name)
+            if comp is None:
+                continue
+
+            uses = comp.calls
+            used_by = comp.called_by
+
+            # --- Split class components (class_intro / method) ---
+            if comp.kind == "class_intro":
+                cls_name = comp.parent_class or name
+                cls_dict = components_by_name.get(cls_name, (None, {}))[1]
+                steps.append({
+                    "step_type": "class_intro",
+                    "name": name,
+                    "parent_class": cls_name,
+                    "kind_label": cls_dict.get("kind", profile.class_noun),
+                    "title": f"Introduce the `{cls_name}` {cls_dict.get('kind', profile.class_noun)}",
+                    "description": cls_dict.get("docstring")
+                        or self._class_description(cls_dict, profile, uses),
+                    "code": comp.body,
+                    "methods": list(cls_dict.get("methods") or []),
+                    "uses": uses,
+                    "used_by": used_by,
+                })
+                continue
+
+            if comp.kind == "method":
+                cls_name = comp.parent_class or ""
+                method_name = name.split(".", 1)[-1] if "." in name else name
+                # Find the method detail dict for args/docstring
+                cls_dict = components_by_name.get(cls_name, (None, {}))[1]
+                method_detail = self._find_method_detail(cls_dict, method_name)
+                args = [a for a in (method_detail.get("args") or []) if a not in ("self", "cls")]
+                steps.append({
+                    "step_type": "method",
+                    "name": name,
+                    "display_name": method_name,
+                    "parent_class": cls_name,
+                    "title": f"Define `{cls_name}.{method_name}`",
+                    "description": method_detail.get("docstring")
+                        or self._method_description(method_name, cls_name, args, profile, uses),
+                    "code": comp.body,
+                    "args": args,
+                    "is_recursive": bool(re.search(
+                        rf"self\.{re.escape(method_name)}\s*\(", comp.body,
+                    )),
+                    "uses": uses,
+                    "used_by": used_by,
+                })
+                continue
+
+            # --- Original function / class handling ---
             if name not in components_by_name:
                 continue
             kind, item = components_by_name[name]
-            comp = graph.get_component(name)
-            uses = comp.calls if comp else []
-            used_by = comp.called_by if comp else []
 
             if kind == "function":
                 steps.append({
@@ -191,12 +243,24 @@ class TutorialGenerator:
 
         # 4. Main code
         if has_main:
+            main_kind = self._classify_main_code(
+                parsed_code["main_code"], profile, graph,
+            )
+            if main_kind == "setup":
+                main_title = "Module Setup"
+                main_desc = (
+                    "These module-level statements configure the runtime"
+                    " environment before the main logic runs."
+                )
+            else:
+                main_title = profile.main_code_title
+                main_desc = self._main_description(
+                    parsed_code["main_code"], profile,
+                )
             steps.append({
                 "step_type": "main",
-                "title": profile.main_code_title,
-                "description": self._main_description(
-                    parsed_code["main_code"], profile,
-                ),
+                "title": main_title,
+                "description": main_desc,
                 "code": parsed_code["main_code"],
             })
 
@@ -263,7 +327,81 @@ class TutorialGenerator:
                 "practice": self._class_practice(step, profile),
             }
 
+        if step["step_type"] == "class_intro":
+            cls_name = step.get("parent_class", step["name"])
+            # Use parent class name for the transition text
+            intro_step = {**step, "name": cls_name}
+            return {
+                **step,
+                "transition": self._class_transition(intro_step, profile),
+                "spotlight": (
+                    f"`{cls_name}` bundles related data and behavior into one"
+                    f" reusable {step.get('kind_label', profile.class_noun)}."
+                    f" We start with its constructor."
+                ),
+                "key_points": self._class_intro_key_points(step, profile),
+                "prompts": self._class_prompts(intro_step, profile),
+                "predict_exercise": self._class_intro_predict(step, profile),
+                "modify_exercise": (
+                    f"Add or change one attribute in `{cls_name}.__init__`."
+                    f" What other methods would need to change?"
+                ),
+                "practice": (
+                    f"Ask students to create an instance of `{cls_name}`"
+                    f" and inspect its initial attributes."
+                ),
+            }
+
+        if step["step_type"] == "method":
+            return {
+                **step,
+                "transition": self._method_transition(step, profile),
+                "spotlight": self._method_spotlight(step, profile),
+                "key_points": self._function_key_points(step, profile),
+                "prompts": self._method_prompts(step, profile),
+                "predict_exercise": self._method_predict(step, profile),
+                "modify_exercise": self._method_modify(step, profile),
+                "practice": self._function_practice(step),
+            }
+
         # main step
+        main_kind = self._classify_main_code(step["code"], profile, graph)
+        if main_kind == "setup":
+            return {
+                **step,
+                "transition": (
+                    "Before the main logic runs, these module-level"
+                    " statements configure the runtime environment."
+                ),
+                "spotlight": (
+                    "This is setup code, not orchestration — it prepares"
+                    " the environment so the classes and functions above"
+                    " work correctly at runtime."
+                ),
+                "key_points": [
+                    "This is configuration, not behavior — it prepares"
+                    " the environment for the logic defined above.",
+                    "Trace each assignment or call to understand what"
+                    " state it creates.",
+                ],
+                "prompts": [
+                    "What would go wrong if this setup code were missing?",
+                    "Is this configuration or behavior?",
+                ],
+                "predict_exercise": (
+                    "What state does this setup code create? Trace each"
+                    " assignment or configuration call."
+                ),
+                "modify_exercise": (
+                    "Change one configuration value and predict how the"
+                    " program's behavior changes."
+                ),
+                "practice": (
+                    "Ask students to identify which earlier components"
+                    " depend on this setup being in place."
+                ),
+            }
+
         return {
             **step,
             "transition": self._main_transition(step, profile, graph),
@@ -316,6 +454,25 @@ class TutorialGenerator:
         return (
             f"This {step['kind_label']} is self-contained, making it a clean"
             f" building block to introduce next."
+        )
+
+    def _method_transition(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> str:
+        cls_name = step.get("parent_class", "")
+        method_name = step.get("display_name", step["name"])
+        uses = step.get("uses", [])
+        if uses:
+            deps = self._join_with_and([
+                f"`{u.split('.')[-1]}`" if "." in u else f"`{u}`"
+                for u in uses
+            ])
+            return (
+                f"Continuing to build out `{cls_name}`, we define"
+                f" `{method_name}` which uses {deps}."
+            )
+        return (
+            f"Next we add `{method_name}` to `{cls_name}`."
         )
 
     def _main_transition(
@@ -406,6 +563,32 @@ class TutorialGenerator:
             base += f" Internally it uses {dep_list}."
         return base
 
+    def _method_description(
+        self,
+        method_name: str,
+        class_name: str,
+        args: list[str],
+        profile: LanguageProfile,
+        uses: list[str],
+    ) -> str:
+        parts: list[str] = []
+        if args:
+            arg_list = self._join_with_and([f"`{a}`" for a in args])
+            parts.append(
+                f"`{class_name}.{method_name}` takes {arg_list} as"
+                f" {'input' if len(args) == 1 else 'inputs'}."
+            )
+        else:
+            parts.append(
+                f"`{class_name}.{method_name}` takes no explicit inputs"
+                f" beyond the instance."
+            )
+        if uses:
+            dep_names = [u.split(".")[-1] if "." in u else u for u in uses]
+            dep_list = self._join_with_and([f"`{d}`" for d in dep_names])
+            parts.append(f"It relies on {dep_list}.")
+        return " ".join(parts)
+
     def _main_description(self, code: str, profile: LanguageProfile) -> str:
         calls = self._top_level_calls(code, profile)
         if calls:
@@ -438,6 +621,28 @@ class TutorialGenerator:
         return (
             f"Focus on the internal logic of `{step['name']}` and what"
             f" effect it produces."
+        )
+
+    def _method_spotlight(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> str:
+        cls_name = step.get("parent_class", "")
+        method_name = step.get("display_name", step["name"])
+        if step.get("is_recursive"):
+            return (
+                f"`{cls_name}.{method_name}` calls itself, so the key"
+                f" question is: where does the recursion stop?"
+            )
+        args = step.get("args") or []
+        if args:
+            return (
+                f"Focus on how `{method_name}` transforms"
+                f" {'its input' if len(args) == 1 else 'its inputs'}"
+                f" and what it does with the instance state."
+            )
+        return (
+            f"Focus on what `{method_name}` does with the instance state"
+            f" and what effect it produces."
         )
 
     # ------------------------------------------------------------------
@@ -525,6 +730,33 @@ class TutorialGenerator:
         )
         return points
 
+    def _class_intro_key_points(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> list[str]:
+        cls_name = step.get("parent_class", step["name"])
+        methods = step.get("methods") or []
+        points: list[str] = []
+        if methods:
+            points.append(
+                f"Full method list: {', '.join(f'`{m}`' for m in methods)}."
+                f" We will cover them one by one."
+            )
+        if profile.state_tokens and any(
+            tok in step["code"] for tok in profile.state_tokens
+        ):
+            points.append(
+                f"The constructor sets up state that the other methods will read and modify."
+            )
+        uses = step.get("uses", [])
+        if uses:
+            points.append(
+                f"Depends on: {self._join_with_and([f'`{u}`' for u in uses])}."
+            )
+        points.append(
+            f"This step introduces the class — the methods follow in the next steps."
+        )
+        return points
+
     def _main_key_points(self, code: str, profile: LanguageProfile) -> list[str]:
         calls = self._top_level_calls(code, profile)
         points = [
@@ -573,6 +805,29 @@ class TutorialGenerator:
             prompts.append(
                 f"Which {profile.method_noun} is the best starting point for"
                 f" understanding `{step['name']}`?"
+            )
+        return prompts
+
+    def _method_prompts(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> list[str]:
+        cls_name = step.get("parent_class", "")
+        method_name = step.get("display_name", step["name"])
+        prompts = [
+            f"What single job does `{method_name}` do for `{cls_name}`?",
+        ]
+        args = step.get("args") or []
+        if args:
+            prompts.append(
+                f"Which input changes the behavior of `{method_name}` the most:"
+                f" {', '.join(f'`{a}`' for a in args)}?"
+            )
+        uses = step.get("uses", [])
+        if uses:
+            dep_names = [u.split(".")[-1] if "." in u else u for u in uses]
+            prompts.append(
+                f"Why does `{method_name}` call"
+                f" {self._join_with_and([f'`{d}`' for d in dep_names])}?"
             )
         return prompts
 
@@ -637,16 +892,69 @@ class TutorialGenerator:
             " What would you pass in?"
         )
 
+    def _class_intro_predict(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> str:
+        cls_name = step.get("parent_class", step["name"])
+        return (
+            f"After creating an instance of `{cls_name}`, what state"
+            f" does it hold? List each attribute and its initial value."
+        )
+
     def _class_predict(
         self, step: dict[str, Any], profile: LanguageProfile,
     ) -> str:
         methods = step.get("methods") or []
-        if methods:
+        # Pick the first non-dunder method for a more interesting exercise
+        interesting = [m for m in methods if not m.startswith("__")]
+        if interesting:
             return (
                 f"Create an instance of `{step['name']}` and call"
-                f" `{methods[0]}`. What do you get back?"
+                f" `{interesting[0]}` with a simple input."
+                f" What does it return?"
+            )
+        if methods:
+            return (
+                f"After creating an instance of `{step['name']}`,"
+                f" what state does it hold? Inspect its attributes."
             )
         return f"What data does a new `{step['name']}` instance start with?"
+
+    def _method_predict(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> str:
+        args = step.get("args") or []
+        method_name = step.get("display_name", step["name"])
+        cls_name = step.get("parent_class", "")
+        if step.get("is_recursive") and args:
+            return (
+                f"Trace `{cls_name}.{method_name}({args[0]}=3)` by hand."
+                f" How many times does it call itself?"
+            )
+        if args:
+            return (
+                f"Pick a simple value for `{args[0]}` and predict"
+                f" what `{method_name}` returns."
+            )
+        return (
+            f"Call `{method_name}` on an instance and predict what"
+            f" it returns or how it changes the object's state."
+        )
+
+    def _method_modify(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> str:
+        method_name = step.get("display_name", step["name"])
+        args = step.get("args") or []
+        if args:
+            return (
+                f"Add a new parameter to `{method_name}` and predict"
+                f" what else needs to change."
+            )
+        return (
+            f"Make `{method_name}` accept one input it currently does not."
+            f" What would you pass in?"
+        )
 
     def _class_modify(
         self, step: dict[str, Any], profile: LanguageProfile,
@@ -905,7 +1213,7 @@ class TutorialGenerator:
             "Which step would you revisit first if the final output were wrong?",
         ]
         first_named = next(
-            (s for s in steps if s["step_type"] in {"function", "class"}),
+            (s for s in steps if s["step_type"] in {"function", "class", "class_intro", "method"}),
             None,
         )
         if first_named is not None:
@@ -1043,6 +1351,31 @@ class TutorialGenerator:
             return "20-30 minutes"
         return "35-45 minutes"
 
+    def _classify_main_code(
+        self,
+        code: str,
+        profile: LanguageProfile,
+        graph: ProgramAnalysis,
+    ) -> str:
+        """Classify main code as 'orchestration' or 'setup'."""
+        calls = self._top_level_calls(code, profile)
+        defined = {c.name for c in graph.components}
+        # Also accept the class name from dotted method names
+        for c in graph.components:
+            if c.parent_class:
+                defined.add(c.parent_class)
+        if any(c in defined for c in calls):
+            return "orchestration"
+        return "setup"
+
+    @staticmethod
+    def _find_method_detail(cls_dict: dict, method_name: str) -> dict:
+        """Find a method's detail dict inside a class's method_details."""
+        for md in cls_dict.get("method_details", []):
+            if md["name"] == method_name:
+                return md
+        return {}
+
     def _step_takeaway(self, step: dict[str, Any]) -> str:
         if step["step_type"] == "imports":
             return (
@@ -1058,6 +1391,17 @@ class TutorialGenerator:
             return (
                 f"{step['title']}: explain what responsibility"
                 f" `{step['name']}` owns."
+            )
+        if step["step_type"] == "class_intro":
+            cls_name = step.get("parent_class", step["name"])
+            return (
+                f"{step['title']}: explain what `{cls_name}` is for"
+                f" and what state it starts with."
+            )
+        if step["step_type"] == "method":
+            return (
+                f"{step['title']}: trace inputs, logic, and state"
+                f" changes inside this method."
             )
         return (
             f"{step['title']}: connect the earlier building blocks"

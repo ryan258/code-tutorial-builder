@@ -21,7 +21,7 @@ if [ ! -d "$VENV_DIR" ]; then
     "$VENV_DIR/bin/pip" install -q "$SCRIPT_DIR[multilang]"
 fi
 
-"$VENV_DIR/bin/python" -m code_tutorial_builder -i "$INPUT" -o "$OUTPUT" -v "$@"
+"$VENV_DIR/bin/python" -m code_tutorial_builder generate -i "$INPUT" -o "$OUTPUT" -v "$@"
 
 echo ""
 echo "Tutorial: $OUTPUT"

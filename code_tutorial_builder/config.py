@@ -13,6 +13,7 @@ class Config:
     output_format: str = "lesson"
     use_ai: bool = False
     env_search_path: Optional[str] = None
+    method_split_threshold: int = 4
 
     def __post_init__(self):
         if self.steps < 1:

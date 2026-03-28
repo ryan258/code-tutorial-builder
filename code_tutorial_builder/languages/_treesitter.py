@@ -164,6 +164,7 @@ class TreeSitterParser:
         # Find methods inside the class body
         method_types = set(self.profile.method_node_types)
         methods = []
+        method_details = []
         body_node = node.child_by_field_name("body")
         if body_node:
             for child in body_node.named_children:
@@ -171,6 +172,7 @@ class TreeSitterParser:
                     mname = child.child_by_field_name("name")
                     if mname:
                         methods.append(self._node_text(mname, source))
+                        method_details.append(self._parse_function(child, source))
 
         kind = _KIND_MAP.get(node.type, "class")
 
@@ -178,6 +180,7 @@ class TreeSitterParser:
             "name": name,
             "body": self._node_text(source_node, source),
             "methods": methods,
+            "method_details": method_details,
             "docstring": self._extract_doc_comment(source_node, source),
             "kind": kind,
             "source_line": source_node.start_point.row + 1,

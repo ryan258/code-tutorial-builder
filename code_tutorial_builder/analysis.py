@@ -18,12 +18,13 @@ class Component:
     """A named code component (function or class) with its dependency info."""
 
     name: str
-    kind: str  # "function" or "class"
+    kind: str  # "function", "class", "class_intro", or "method"
     body: str
     calls: list[str] = field(default_factory=list)
     called_by: list[str] = field(default_factory=list)
     concepts: list[str] = field(default_factory=list)
     source_line: int = 0
+    parent_class: Optional[str] = None
 
 
 @dataclass
@@ -51,7 +52,12 @@ class ProgramAnalysis:
         return self.dependency_edge_count > 0
 
 
-def analyze(parsed: ParseResult, profile: LanguageProfile) -> ProgramAnalysis:
+def analyze(
+    parsed: ParseResult,
+    profile: LanguageProfile,
+    *,
+    method_split_threshold: int = 4,
+) -> ProgramAnalysis:
     """Analyze parsed code to build a dependency graph and detect concepts."""
     defined_names: set[str] = set()
     components: list[Component] = []
@@ -60,17 +66,35 @@ def analyze(parsed: ParseResult, profile: LanguageProfile) -> ProgramAnalysis:
     for _, _, _, item in ordered_items:
         defined_names.add(item["name"])
 
+    # Build a lookup so splitting can find the original parsed dict
+    classes_by_name: dict[str, dict] = {
+        cls["name"]: cls for cls in parsed.get("classes", [])
+    }
+
     for source_line, _, kind, item in ordered_items:
         calls = _find_calls(item["body"], item["name"], defined_names)
         concepts = _detect_concepts(item["body"], item["name"], profile)
-        components.append(Component(
-            name=item["name"],
-            kind=kind,
-            body=item["body"],
-            calls=calls,
-            concepts=concepts,
-            source_line=source_line,
-        ))
+
+        # Large class? Split into method-level sub-components.
+        if (
+            kind == "class"
+            and item["name"] in classes_by_name
+            and len(classes_by_name[item["name"]].get("method_details", [])) > method_split_threshold
+        ):
+            sub_components = _split_class(
+                item, classes_by_name[item["name"]], calls,
+                defined_names, profile, source_line,
+            )
+            components.extend(sub_components)
+        else:
+            components.append(Component(
+                name=item["name"],
+                kind=kind,
+                body=item["body"],
+                calls=calls,
+                concepts=concepts,
+                source_line=source_line,
+            ))
 
     # Build forward and reverse call graphs
     call_graph: dict[str, list[str]] = {c.name: c.calls for c in components}
@@ -117,6 +141,93 @@ def _find_calls(
         if re.search(rf"\b{re.escape(name)}\s*\(", search_text):
             refs.add(name)
 
+    return sorted(refs)
+
+
+def _split_class(
+    item: dict,
+    cls_dict: dict,
+    class_level_calls: list[str],
+    defined_names: set[str],
+    profile: LanguageProfile,
+    source_line: int,
+) -> list[Component]:
+    """Split a large class into an intro component + per-method components."""
+    class_name = item["name"]
+    method_details: list[dict] = cls_dict.get("method_details", [])
+    method_names = {m["name"] for m in method_details}
+
+    # --- Class intro: class declaration + __init__ ---
+    init_method = None
+    rest_methods: list[dict] = []
+    for md in method_details:
+        if md["name"] == "__init__":
+            init_method = md
+        else:
+            rest_methods.append(md)
+
+    if init_method:
+        intro_body = f"class {class_name}:\n{init_method['body']}"
+        intro_methods_shown = ["__init__"]
+    else:
+        # No __init__; show just the class line
+        intro_body = f"class {class_name}:\n    ..."
+        intro_methods_shown = []
+
+    intro_name = f"{class_name}.__init__" if init_method else class_name
+    intro_concepts = _detect_concepts(intro_body, class_name, profile)
+
+    sub_components: list[Component] = [
+        Component(
+            name=intro_name,
+            kind="class_intro",
+            body=intro_body,
+            calls=class_level_calls,
+            concepts=intro_concepts,
+            source_line=source_line,
+            parent_class=class_name,
+        )
+    ]
+
+    # --- One component per remaining method ---
+    for md in rest_methods:
+        method_qname = f"{class_name}.{md['name']}"
+        # Detect calls: self.method() calls to siblings + calls to external names
+        body = md["body"]
+        calls = _find_method_calls(body, md["name"], method_names, class_name)
+        calls.extend(
+            c for c in _find_calls(body, md["name"], defined_names)
+            if c not in calls
+        )
+        concepts = _detect_concepts(body, md["name"], profile)
+
+        sub_components.append(Component(
+            name=method_qname,
+            kind="method",
+            body=body,
+            calls=calls,
+            concepts=concepts,
+            source_line=md.get("source_line", source_line),
+            parent_class=class_name,
+        ))
+
+    return sub_components
+
+
+def _find_method_calls(
+    body: str,
+    own_name: str,
+    sibling_names: set[str],
+    class_name: str,
+) -> list[str]:
+    """Find self.method() calls to sibling methods within the same class."""
+    search_text = _analysis_text(body, skip_signature=True)
+    refs: set[str] = set()
+    for name in sibling_names:
+        if name == own_name:
+            continue
+        if re.search(rf"self\.{re.escape(name)}\s*\(", search_text):
+            refs.add(f"{class_name}.{name}")
     return sorted(refs)
 
 

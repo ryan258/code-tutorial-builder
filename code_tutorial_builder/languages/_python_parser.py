@@ -87,10 +87,16 @@ class PythonParser:
             for item in node.body
             if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
         ]
+        method_details = [
+            self._parse_function(item, lines)
+            for item in node.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
         return {
             'name': node.name,
             'body': self._extract_source(node, lines),
             'methods': methods,
+            'method_details': method_details,
             'docstring': ast.get_docstring(node),
             'kind': 'class',
             'source_line': node.lineno,
