@@ -9,6 +9,16 @@
 {% for stat in lesson_stats -%}
 - {{ stat }}
 {% endfor %}
+{% if dependency_map %}
+
+### How the Pieces Connect
+
+| Component | Kind | Uses | Used By |
+|-----------|------|------|---------|
+{% for row in dependency_map -%}
+| `{{ row.name }}` | {{ row.kind }} | {{ row.uses }} | {{ row.used_by }} |
+{% endfor %}
+{% endif %}
 
 ## Warm-Up
 
@@ -39,6 +49,10 @@
 {% for step in steps %}
 ### Step {{ loop.index }}: {{ step.title }}
 
+{% if step.transition %}
+> {{ step.transition }}
+
+{% endif %}
 {{ step.description }}
 
 **Focus**
@@ -61,11 +75,27 @@
 {{ step.code }}
 ```
 
+**Predict**
+
+{{ step.predict_exercise }}
+
+**Modify**
+
+{{ step.modify_exercise }}
+
 **Try It**
 
 {{ step.practice }}
 
 {% endfor %}
+{% if complete_program %}
+## The Complete Program
+
+```{{ code_fence_lang | default('python') }}
+{{ complete_program }}
+```
+
+{% endif %}
 ## Checks for Understanding
 
 {% for question in checks_for_understanding -%}

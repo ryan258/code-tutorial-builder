@@ -4,7 +4,7 @@ This module is only imported when a non-Python file is parsed.
 tree-sitter and tree-sitter-language-pack must be installed.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from ._base import LanguageProfile, ParseResult
 
@@ -101,7 +101,7 @@ class TreeSitterParser:
             return
         yield node, source_node
 
-    def _extract_doc_comment(self, node, source: bytes) -> str | None:
+    def _extract_doc_comment(self, node, source: bytes) -> Optional[str]:
         """Extract a doc comment from the previous sibling, if any."""
         prev = node.prev_named_sibling
         if prev is None:

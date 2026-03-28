@@ -7,7 +7,7 @@ if [ $# -eq 0 ]; then
 fi
 
 INPUT="$1"
-BASH_ARGS=("${@:2}")
+shift
 BASENAME="${INPUT%.*}"
 OUTPUT="${BASENAME}_tutorial.md"
 
@@ -21,7 +21,7 @@ if [ ! -d "$VENV_DIR" ]; then
     "$VENV_DIR/bin/pip" install -q "$SCRIPT_DIR[multilang]"
 fi
 
-"$VENV_DIR/bin/python" -m code_tutorial_builder -i "$INPUT" -o "$OUTPUT" -v "${BASH_ARGS[@]}"
+"$VENV_DIR/bin/python" -m code_tutorial_builder -i "$INPUT" -o "$OUTPUT" -v "$@"
 
 echo ""
 echo "Tutorial: $OUTPUT"

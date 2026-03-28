@@ -1,7 +1,7 @@
 import pytest
 from code_tutorial_builder.generator import TutorialGenerator
 from code_tutorial_builder.config import Config
-from code_tutorial_builder.parser import PythonParser
+from code_tutorial_builder.languages import PythonParser
 
 
 class TestTutorialGenerator:
@@ -67,8 +67,8 @@ class TestTutorialGenerator:
 
     def test_language_aware_go_vocabulary(self):
         parsed = {
-            "functions": [{"name": "main", "body": "func main() {}", "args": [], "docstring": None}],
-            "classes": [{"name": "Server", "body": "type Server struct{}", "methods": [], "docstring": None, "kind": "type"}],
+            "functions": [{"name": "main", "body": "func main() {}", "args": [], "docstring": None, "source_line": 1}],
+            "classes": [{"name": "Server", "body": "type Server struct{}", "methods": [], "docstring": None, "kind": "type", "source_line": 3}],
             "imports": ['import "fmt"'],
             "main_code": "",
             "language": "go",
@@ -81,7 +81,7 @@ class TestTutorialGenerator:
     def test_language_aware_rust_vocabulary(self):
         parsed = {
             "functions": [],
-            "classes": [{"name": "Point", "body": "struct Point {}", "methods": [], "docstring": None, "kind": "struct"}],
+            "classes": [{"name": "Point", "body": "struct Point {}", "methods": [], "docstring": None, "kind": "struct", "source_line": 1}],
             "imports": ["use std::io;"],
             "main_code": "",
             "language": "rust",
@@ -115,8 +115,11 @@ class TestTutorialGenerator:
         assert "## Teaching Tips" in tutorial
         assert "## Checks for Understanding" in tutorial
         assert "## Extension Challenge" in tutorial
+        assert "## The Complete Program" in tutorial
         assert "**Look For**" in tutorial
         assert "**Ask Your Students**" in tutorial
+        assert "**Predict**" in tutorial
+        assert "**Modify**" in tutorial
         assert "**Try It**" in tutorial
         assert "recursion" in tutorial.lower()
         assert "\\n" not in tutorial
@@ -184,22 +187,105 @@ class TestTutorialGenerator:
 
         assert "# Line Break Check\n\n## Big Idea" in tutorial
 
-    def test_steps_follow_source_order_for_mixed_definitions(self):
+    def test_steps_follow_dependency_order(self):
+        """Steps should follow dependency order: leaf functions first."""
         code = (
-            "class Greeter:\n"
-            "    def greet(self):\n"
-            "        return 'hi'\n"
+            "def caller():\n"
+            "    return helper()\n"
             "\n"
-            "def build_message(name):\n"
-            "    return name\n"
+            "def helper():\n"
+            "    return 42\n"
         )
         parsed = self.parser.parse(code)
+        tutorial = self.generator.generate(parsed, title="Dep Order")
 
-        tutorial = self.generator.generate(parsed, title="Ordering Check")
+        # helper has no deps so should come before caller
+        helper_idx = tutorial.index("Define `helper`")
+        caller_idx = tutorial.index("Define `caller`")
+        assert helper_idx < caller_idx
 
-        class_index = tutorial.index("Understanding the Greeter class")
-        function_index = tutorial.index("Understanding the build_message function")
-        assert class_index < function_index
+    def test_transition_narratives_present(self):
+        """Steps with dependencies should have transition narratives."""
+        code = (
+            "def helper():\n"
+            "    return 42\n"
+            "\n"
+            "def caller():\n"
+            "    return helper()\n"
+        )
+        parsed = self.parser.parse(code)
+        tutorial = self.generator.generate(parsed, title="Transitions")
+
+        # caller depends on helper, so should mention it in transition
+        assert "With `helper` available" in tutorial
+
+    def test_cross_references_in_key_points(self):
+        """Dependency relationships show up in key points."""
+        code = (
+            "def leaf():\n"
+            "    return 1\n"
+            "\n"
+            "def caller():\n"
+            "    return leaf() + 1\n"
+        )
+        parsed = self.parser.parse(code)
+        tutorial = self.generator.generate(parsed, title="Cross Refs")
+
+        assert "Depends on: `leaf`" in tutorial
+        assert "Used later by: `caller`" in tutorial
+
+    def test_predict_exercises_present(self):
+        code = (
+            "def factorial(n):\n"
+            "    if n == 0:\n"
+            "        return 1\n"
+            "    return n * factorial(n - 1)\n"
+        )
+        parsed = self.parser.parse(code)
+        tutorial = self.generator.generate(parsed, title="Exercises")
+
+        assert "**Predict**" in tutorial
+        assert "factorial(n=3)" in tutorial
+
+    def test_modify_exercises_present(self):
+        code = (
+            "def factorial(n):\n"
+            "    if n == 0:\n"
+            "        return 1\n"
+            "    return n * factorial(n - 1)\n"
+        )
+        parsed = self.parser.parse(code)
+        tutorial = self.generator.generate(parsed, title="Exercises")
+
+        assert "**Modify**" in tutorial
+        assert "base case" in tutorial
+
+    def test_complete_program_section(self):
+        code = (
+            "def greet(name):\n"
+            "    return name\n\n"
+            "print(greet('Ada'))\n"
+        )
+        parsed = self.parser.parse(code)
+        tutorial = self.generator.generate(parsed, title="Complete")
+
+        assert "## The Complete Program" in tutorial
+        assert "def greet(name):" in tutorial
+        assert "print(greet('Ada'))" in tutorial
+
+    def test_dependency_map_in_output(self):
+        code = (
+            "def helper():\n"
+            "    return 1\n\n"
+            "def caller():\n"
+            "    return helper()\n"
+        )
+        parsed = self.parser.parse(code)
+        tutorial = self.generator.generate(parsed, title="Dep Map")
+
+        assert "How the Pieces Connect" in tutorial
+        assert "| `helper` |" in tutorial
+        assert "| `caller` |" in tutorial
 
     def test_at_a_glance_reads_like_teacher_planning_notes(self):
         code = (
@@ -209,7 +295,6 @@ class TestTutorialGenerator:
             "    return n * factorial(n - 1)\n"
         )
         parsed = self.parser.parse(code)
-
         tutorial = self.generator.generate(parsed, title="Planning Notes")
 
         assert "Suggested level:" in tutorial
@@ -222,8 +307,41 @@ class TestTutorialGenerator:
             "    return name\n\n"
             "print(greet('Ada'))\n"
         )
-
         tutorial = self.generator.generate(parsed, title="Builtin Filter")
 
-        assert "calling `greet`." in tutorial
+        assert "calling `greet`" in tutorial
         assert "explains the behavior of `greet`" in tutorial
+
+    def test_handout_format(self):
+        code = (
+            "def greet(name):\n"
+            "    return name\n\n"
+            "print(greet('Ada'))\n"
+        )
+        config = Config(steps=5, output_format="handout")
+        generator = TutorialGenerator(config)
+        parsed = self.parser.parse(code)
+        tutorial = generator.generate(parsed, title="Handout Test")
+
+        # Handout should have student-facing sections
+        assert "## Building the Program" in tutorial
+        assert "**Predict:**" in tutorial
+        assert "**Modify:**" in tutorial
+        assert "## Exercises" in tutorial
+        assert "## Challenge" in tutorial
+
+        # Handout should NOT have teacher-only sections
+        assert "## Teaching Tips" not in tutorial
+        assert "## Warm-Up" not in tutorial
+        assert "**Try It**" not in tutorial
+
+    def test_language_aware_builtin_filtering(self):
+        """Python builtins are filtered; Go builtins would not be."""
+        code = "def compute():\n    return 42\n\nresult = compute()\nprint(result)\n"
+        parsed = self.parser.parse(code)
+        tutorial = self.generator.generate(parsed, title="Builtins")
+
+        # print should be filtered as a Python builtin in main code description
+        assert "calling `compute`" in tutorial
+        # print should NOT appear as a top-level call to trace
+        assert "calling `print`" not in tutorial

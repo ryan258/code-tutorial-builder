@@ -1,39 +1,28 @@
-import ast
-from typing import List, Dict, Any
+from __future__ import annotations
 
-from .languages._base import ParseResult
+import ast
+from typing import Any, Dict, List
+
+from ._base import ParseResult
 
 
 class PythonParser:
-    """Parse Python code into structured components."""
+    """Parse Python code into structured components using the ast module."""
 
     def parse(self, code: str) -> ParseResult:
-        """
-        Parse Python code into components.
-
-        Returns:
-            Dict containing:
-                - functions: List of function definitions
-                - classes: List of class definitions
-                - imports: List of import statements
-                - main_code: Code outside functions/classes/imports
-        """
         try:
             tree = ast.parse(code)
         except SyntaxError as e:
             raise ValueError(f"Invalid Python syntax: {e}")
 
         lines = code.split('\n')
-        functions = []
-        classes = []
-        imports = []
-
-        # Track line ranges occupied by functions, classes, and imports
-        # so we can extract main_code as everything else.
-        occupied = set()
+        functions: list[Dict[str, Any]] = []
+        classes: list[Dict[str, Any]] = []
+        imports: list[str] = []
+        occupied: set[int] = set()
 
         for node in tree.body:
-            if isinstance(node, ast.FunctionDef) or isinstance(node, ast.AsyncFunctionDef):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 functions.append(self._parse_function(node, lines))
                 self._mark_occupied(node, occupied)
             elif isinstance(node, ast.ClassDef):
@@ -43,8 +32,6 @@ class PythonParser:
                 imports.append(self._extract_source(node, lines))
                 self._mark_occupied(node, occupied)
 
-        # Main code is every non-empty, non-comment line not inside a
-        # function, class, or import statement.
         main_lines = []
         for i, line in enumerate(lines):
             if i in occupied:
@@ -61,28 +48,20 @@ class PythonParser:
             'language': 'python',
         }
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
-
     @staticmethod
-    def _mark_occupied(node: ast.AST, occupied: set) -> None:
-        """Mark the line range of *node* (including decorators) as occupied."""
+    def _mark_occupied(node: ast.AST, occupied: set[int]) -> None:
         start = node.lineno - 1
-        # Decorators sit above the def/class line
         if hasattr(node, 'decorator_list') and node.decorator_list:
             start = node.decorator_list[0].lineno - 1
-        end = node.end_lineno  # end_lineno is 1-based inclusive
+        end = node.end_lineno
         for line_no in range(start, end):
             occupied.add(line_no)
 
     @staticmethod
-    def _extract_source(node: ast.AST, lines: List[str]) -> str:
-        """Extract the source text for an AST node."""
+    def _extract_source(node: ast.AST, lines: list[str]) -> str:
         return '\n'.join(lines[node.lineno - 1 : node.end_lineno])
 
-    def _parse_function(self, node: ast.FunctionDef, lines: List[str]) -> Dict[str, Any]:
-        """Parse a function definition node."""
+    def _parse_function(self, node: ast.FunctionDef, lines: list[str]) -> Dict[str, Any]:
         return {
             'name': node.name,
             'body': self._extract_source(node, lines),
@@ -91,8 +70,7 @@ class PythonParser:
             'source_line': node.lineno,
         }
 
-    def _parse_class(self, node: ast.ClassDef, lines: List[str]) -> Dict[str, Any]:
-        """Parse a class definition node."""
+    def _parse_class(self, node: ast.ClassDef, lines: list[str]) -> Dict[str, Any]:
         methods = [
             item.name
             for item in node.body

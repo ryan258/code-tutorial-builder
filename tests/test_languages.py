@@ -1,11 +1,11 @@
 import pytest
 from code_tutorial_builder.languages import (
     LANGUAGES,
+    PythonParser,
     detect_language,
     get_parser,
     get_profile,
 )
-from code_tutorial_builder.parser import PythonParser
 
 
 class TestLanguageRegistry:
@@ -21,6 +21,31 @@ class TestLanguageRegistry:
             assert profile.code_fence_lang
             assert profile.function_noun
             assert profile.class_noun
+
+    def test_profiles_have_language_heuristics(self):
+        """Every profile should have language-aware heuristic fields."""
+        for name, profile in LANGUAGES.items():
+            assert isinstance(profile.builtin_calls, tuple), f"{name} missing builtin_calls"
+            assert isinstance(profile.state_tokens, tuple), f"{name} missing state_tokens"
+            assert isinstance(profile.iteration_keywords, tuple), f"{name} missing iteration_keywords"
+            assert isinstance(profile.branch_keywords, tuple), f"{name} missing branch_keywords"
+            assert isinstance(profile.error_keywords, tuple), f"{name} missing error_keywords"
+
+    def test_python_builtins_include_common_names(self):
+        profile = get_profile("python")
+        assert "print" in profile.builtin_calls
+        assert "len" in profile.builtin_calls
+        assert "range" in profile.builtin_calls
+
+    def test_javascript_builtins_include_common_names(self):
+        profile = get_profile("javascript")
+        assert "console" in profile.builtin_calls
+        assert "parseInt" in profile.builtin_calls
+
+    def test_go_builtins_include_common_names(self):
+        profile = get_profile("go")
+        assert "fmt" in profile.builtin_calls
+        assert "len" in profile.builtin_calls
 
 
 class TestLanguageDetection:

@@ -1,9 +1,12 @@
+import importlib
 import subprocess
 import sys
 
 import pytest
 from click.testing import CliRunner
 from code_tutorial_builder.__main__ import main
+
+_has_tree_sitter = importlib.util.find_spec("tree_sitter_language_pack") is not None
 
 
 class TestCLI:
@@ -165,6 +168,7 @@ class TestCLI:
         assert result.exit_code == 0
         assert "greet" in output_file.read_text()
 
+    @pytest.mark.skipif(not _has_tree_sitter, reason="tree-sitter not installed")
     def test_cli_javascript_end_to_end(self, tmp_path):
         input_file = tmp_path / "app.js"
         input_file.write_text("function greet(name) {\n  console.log(name);\n}\n")
@@ -193,3 +197,29 @@ class TestCLI:
 
         assert result.exit_code == 1
         assert "OPENROUTER_API_KEY" in result.output
+
+    def test_cli_format_option(self, tmp_path):
+        input_file = tmp_path / "sample.py"
+        input_file.write_text("def greet():\n    print('hi')\n")
+        output_file = tmp_path / "handout.md"
+
+        result = self.runner.invoke(main, [
+            '--input', str(input_file),
+            '--output', str(output_file),
+            '--format', 'handout',
+        ])
+        assert result.exit_code == 0
+        content = output_file.read_text()
+        assert "## Building the Program" in content
+        assert "## Teaching Tips" not in content
+
+    def test_cli_format_invalid_rejected(self, tmp_path):
+        input_file = tmp_path / "sample.py"
+        input_file.write_text("x = 1\n")
+
+        result = self.runner.invoke(main, [
+            '--input', str(input_file),
+            '--output', str(tmp_path / "out.md"),
+            '--format', 'invalid',
+        ])
+        assert result.exit_code != 0

@@ -1,17 +1,28 @@
 # Code Tutorial Builder
 
-A tool that converts working code into step-by-step lessons with explanations, warm-ups, vocabulary, checks for understanding, extension prompts, and runnable examples. Supports multiple programming languages.
+A tool that converts working code into step-by-step lessons with dependency-aware ordering, transition narratives, predict/modify exercises, cross-reference maps, and runnable examples. Supports multiple programming languages.
+
+## What Makes It Different
+
+Most code explainers walk through code top-to-bottom. This tool **teaches like an instructor would**:
+
+- **Dependency-ordered steps** --- Leaf functions come first, then the code that uses them. Students never see a call to something they haven't learned yet.
+- **Transition narratives** --- Each step explains *why* it comes next: "With `helper` available, we can now build `process` which uses it."
+- **Cross-reference map** --- A table showing what each component uses and what uses it.
+- **Predict & Modify exercises** --- Concrete, code-specific exercises for each step, not generic prompts.
+- **Complete program listing** --- The full code at the end so students can see how everything fits together.
+- **Two output formats** --- `lesson` (teacher plan with tips, warm-ups, vocabulary) and `handout` (student-facing with code and exercises).
 
 ## Supported Languages
 
-| Language   | Extensions        | Parser            |
-|------------|-------------------|-------------------|
-| Python     | `.py`             | Built-in (ast)    |
-| JavaScript | `.js`, `.mjs`, `.cjs` | tree-sitter   |
-| TypeScript | `.ts`             | tree-sitter       |
-| Go         | `.go`             | tree-sitter       |
-| Rust       | `.rs`             | tree-sitter       |
-| Java       | `.java`           | tree-sitter       |
+| Language   | Extensions            | Parser            |
+|------------|-----------------------|-------------------|
+| Python     | `.py`                 | Built-in (ast)    |
+| JavaScript | `.js`, `.mjs`, `.cjs` | tree-sitter       |
+| TypeScript | `.ts`                 | tree-sitter       |
+| Go         | `.go`                 | tree-sitter       |
+| Rust       | `.rs`                 | tree-sitter       |
+| Java       | `.java`               | tree-sitter       |
 
 JSX and TSX files are not yet supported.
 
@@ -24,7 +35,7 @@ JSX and TSX files are not yet supported.
 ./run.sh path/to/file.py --steps 8 --title "Recursion Lesson"
 ```
 
-This handles everything — creates a virtualenv on first run, installs dependencies, and generates the tutorial. The output is saved alongside the input file (e.g. `file_tutorial.md`).
+This handles everything --- creates a virtualenv on first run, installs dependencies, and generates the tutorial. The output is saved alongside the input file (e.g. `file_tutorial.md`).
 
 ## Installation
 
@@ -52,17 +63,37 @@ pip install -e ".[dev]"
 python -m code_tutorial_builder --input example.py --output tutorial.md --steps 5
 ```
 
+### Output formats
+
+Generate a full teacher lesson plan (default):
+
+```bash
+python -m code_tutorial_builder -i example.py -o lesson.md
+```
+
+Generate a student-facing handout with code and exercises only:
+
+```bash
+python -m code_tutorial_builder -i example.py -o handout.md --format handout
+```
+
+### Language detection
+
 Language is auto-detected from the file extension. Override with `--language`:
 
 ```bash
 python -m code_tutorial_builder -i app.ts -o tutorial.md --language typescript
 ```
 
-Set a classroom-friendly title explicitly with `--title`:
+### Custom titles
+
+Set a classroom-friendly title with `--title`:
 
 ```bash
 python -m code_tutorial_builder -i example.py -o tutorial.md --title "Intro to Recursion"
 ```
+
+### AI enhancement
 
 To use OpenRouter for richer tutorial copy, create a `.env` file in the repo or source-file directory:
 
@@ -81,20 +112,14 @@ The parser and code extraction stay deterministic; OpenRouter is only used to im
 
 ## Example
 
-Given a Python file `example.py`:
+Given `example.py` with two recursive functions and a class, the tool produces a lesson that:
 
-```python
-def factorial(n):
-    if n == 0:
-        return 1
-    else:
-        return n * factorial(n-1)
+1. Teaches `factorial` first (no dependencies, natural starting point)
+2. Teaches `fibonacci` next (also independent)
+3. Introduces `Calculator` (self-contained class)
+4. Shows the main execution tying them together
 
-result = factorial(5)
-print(result)
-```
-
-The tool generates a teacher-friendly tutorial with language-appropriate terminology, source-order-aware steps, real Markdown formatting, warm-up prompts, teaching goals, guided questions, recap notes, extension ideas, and syntax-highlighted code blocks.
+Each step includes transition narratives ("This function has no dependencies... a natural starting point"), predict exercises ("Trace `factorial(n=3)` by hand"), modify challenges ("Change the base case --- what happens?"), and a dependency map showing how the pieces connect.
 
 ## Development
 

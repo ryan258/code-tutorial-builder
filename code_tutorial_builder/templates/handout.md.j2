@@ -1,0 +1,49 @@
+# {{ title }}
+
+{{ overview }}
+
+{% if vocabulary %}
+## Key Terms
+
+{% for item in vocabulary -%}
+- {{ item }}
+{% endfor %}
+
+{% endif %}
+## Building the Program
+
+{% for step in steps %}
+### Step {{ loop.index }}: {{ step.title }}
+
+{% if step.transition %}
+> {{ step.transition }}
+
+{% endif %}
+{{ step.description }}
+
+```{{ code_fence_lang | default('python') }}
+{{ step.code }}
+```
+
+**Predict:** {{ step.predict_exercise }}
+
+**Modify:** {{ step.modify_exercise }}
+
+{% endfor %}
+{% if complete_program %}
+## The Complete Program
+
+```{{ code_fence_lang | default('python') }}
+{{ complete_program }}
+```
+
+{% endif %}
+## Exercises
+
+{% for question in checks_for_understanding -%}
+{{ loop.index }}. {{ question }}
+{% endfor %}
+
+## Challenge
+
+{{ extension_challenge }}

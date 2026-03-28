@@ -1,3 +1,13 @@
+"""Tutorial generator — turns parsed code into pedagogically rich lessons.
+
+The generator uses dependency analysis to order steps so each piece of code
+only uses concepts already introduced.  Every step includes transition
+narratives, cross-references, predict-the-output exercises, and modification
+challenges drawn from the actual code.
+"""
+
+from __future__ import annotations
+
 import logging
 import re
 from pathlib import Path
@@ -6,32 +16,14 @@ from typing import Any, Dict, List, Optional
 from jinja2 import Environment, FileSystemLoader, Template
 
 from .ai import OpenRouterClient, build_openrouter_client
+from .analysis import ProgramAnalysis, analyze
 from .config import Config
+from .languages import get_profile
 from .languages._base import LanguageProfile, ParseResult
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 
 logger = logging.getLogger(__name__)
-
-_NON_TEACHING_CALLS = {
-    "bool",
-    "dict",
-    "enumerate",
-    "float",
-    "int",
-    "len",
-    "list",
-    "map",
-    "max",
-    "min",
-    "print",
-    "range",
-    "set",
-    "sorted",
-    "str",
-    "sum",
-    "tuple",
-}
 
 
 class TutorialGenerator:
@@ -40,43 +32,48 @@ class TutorialGenerator:
     def __init__(self, config: Config, ai_client: Optional[OpenRouterClient] = None):
         self.config = config
         self.ai_client = ai_client
-        self.env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)))
+        self.env = Environment(
+            loader=FileSystemLoader(str(_TEMPLATE_DIR)),
+            keep_trailing_newline=True,
+        )
 
     def generate(self, parsed_code: ParseResult, title: str = "Code Tutorial") -> str:
-        """
-        Generate a tutorial from parsed code.
-
-        Returns:
-            Markdown formatted tutorial string
-        """
         language = parsed_code.get("language", "python")
-
-        from .languages import get_profile
         profile = get_profile(language)
+        graph = analyze(parsed_code, profile)
 
-        steps = self._create_steps(parsed_code, profile)
+        steps = self._create_steps(parsed_code, profile, graph)
         if self.config.use_ai:
             steps = self._enhance_steps_with_ai(language, steps)
-        steps = [self._decorate_step(step, profile) for step in steps]
+        steps = [self._decorate_step(step, profile, graph) for step in steps]
 
-        overview = self._build_overview(parsed_code, profile, steps)
-        warm_up = self._build_warm_up(parsed_code, profile)
-        vocabulary = self._build_vocabulary(parsed_code, profile)
-        learning_goals = self._build_learning_goals(parsed_code, profile)
-        teaching_tips = self._build_teaching_tips(parsed_code)
-        checks_for_understanding = self._build_checks_for_understanding(steps)
-        extension_challenge = self._build_extension_challenge(parsed_code, profile)
+        complete_program = self._build_complete_program(parsed_code)
+        overview = self._build_overview(parsed_code, profile, steps, graph)
+        warm_up = self._build_warm_up(parsed_code, profile, graph)
+        vocabulary = self._build_vocabulary(parsed_code, profile, graph)
+        learning_goals = self._build_learning_goals(parsed_code, profile, graph)
+        teaching_tips = self._build_teaching_tips(parsed_code, profile, graph)
+        checks_for_understanding = self._build_checks_for_understanding(steps, graph)
+        extension_challenge = self._build_extension_challenge(parsed_code, profile, graph)
         recap_points = self._build_recap_points(steps)
-        lesson_stats = self._build_lesson_stats(parsed_code, profile, steps)
+        lesson_stats = self._build_lesson_stats(parsed_code, profile, steps, graph)
+        dependency_map = self._build_dependency_map(graph)
+
+        template_name = {
+            "handout": "handout.md.j2",
+        }.get(self.config.output_format, "default.md.j2")
 
         if self.config.template:
-            template = Template(Path(self.config.template).read_text(encoding="utf-8"))
+            template = self.env.from_string(
+                Path(self.config.template).read_text(encoding="utf-8")
+            )
         else:
-            template = self.env.get_template("default.md.j2")
+            template = self.env.get_template(template_name)
 
         return template.render(
             title=title,
             steps=steps,
+            complete_program=complete_program,
             overview=overview,
             warm_up=warm_up,
             vocabulary=vocabulary,
@@ -86,15 +83,19 @@ class TutorialGenerator:
             extension_challenge=extension_challenge,
             recap_points=recap_points,
             lesson_stats=lesson_stats,
+            dependency_map=dependency_map,
             code_fence_lang=profile.code_fence_lang,
         )
+
+    # ------------------------------------------------------------------
+    # AI enhancement
+    # ------------------------------------------------------------------
 
     def _enhance_steps_with_ai(
         self,
         language: str,
-        steps: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        """Use OpenRouter to improve step titles and descriptions."""
+        steps: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         if not steps:
             return steps
 
@@ -105,61 +106,76 @@ class TutorialGenerator:
             raise ValueError(
                 "AI mode requires OPENROUTER_API_KEY in a .env file or environment."
             )
-
         return client.rewrite_steps(language=language, steps=steps)
+
+    # ------------------------------------------------------------------
+    # Step creation — dependency-ordered, incremental
+    # ------------------------------------------------------------------
 
     def _create_steps(
         self,
         parsed_code: ParseResult,
         profile: LanguageProfile,
-    ) -> List[Dict[str, Any]]:
-        """Create tutorial steps from parsed code."""
-        steps: List[Dict[str, Any]] = []
+        graph: ProgramAnalysis,
+    ) -> list[dict[str, Any]]:
+        steps: list[dict[str, Any]] = []
 
+        # 1. Imports
         if parsed_code.get("imports"):
-            steps.append(
-                {
-                    "step_type": "imports",
-                    "title": profile.import_step_title,
-                    "description": self._default_import_description(
-                        parsed_code["imports"],
-                        profile,
-                    ),
-                    "code": "\n".join(parsed_code["imports"]),
-                    "imports": list(parsed_code["imports"]),
-                }
-            )
+            steps.append({
+                "step_type": "imports",
+                "title": profile.import_step_title,
+                "description": self._import_description(
+                    parsed_code["imports"], profile,
+                ),
+                "code": "\n".join(parsed_code["imports"]),
+                "imports": list(parsed_code["imports"]),
+            })
 
-        for item_type, item in self._ordered_definitions(parsed_code):
-            if item_type == "function":
-                steps.append(
-                    {
-                        "step_type": "function",
-                        "name": item["name"],
-                        "title": f"Understanding the {item['name']} {profile.function_noun}",
-                        "description": item.get("docstring")
-                        or self._default_function_description(item, profile),
-                        "code": item["body"],
-                        "args": list(item.get("args") or []),
-                        "is_recursive": self._is_recursive(item),
-                    }
-                )
+        # 2. Functions and classes in dependency order
+        components_by_name: dict[str, tuple[str, dict[str, Any]]] = {}
+        for func in parsed_code.get("functions", []):
+            components_by_name[func["name"]] = ("function", func)
+        for cls in parsed_code.get("classes", []):
+            components_by_name[cls["name"]] = ("class", cls)
+
+        for name in graph.dependency_order:
+            if name not in components_by_name:
                 continue
+            kind, item = components_by_name[name]
+            comp = graph.get_component(name)
+            uses = comp.calls if comp else []
+            used_by = comp.called_by if comp else []
 
-            kind = item.get("kind", profile.class_noun)
-            steps.append(
-                {
+            if kind == "function":
+                steps.append({
+                    "step_type": "function",
+                    "name": item["name"],
+                    "title": f"Define `{item['name']}`",
+                    "description": item.get("docstring")
+                        or self._function_description(item, profile, uses),
+                    "code": item["body"],
+                    "args": list(item.get("args") or []),
+                    "is_recursive": self._is_recursive(item),
+                    "uses": uses,
+                    "used_by": used_by,
+                })
+            else:
+                kind_label = item.get("kind", profile.class_noun)
+                steps.append({
                     "step_type": "class",
                     "name": item["name"],
-                    "kind_label": kind,
-                    "title": f"Understanding the {item['name']} {kind}",
+                    "kind_label": kind_label,
+                    "title": f"Define the `{item['name']}` {kind_label}",
                     "description": item.get("docstring")
-                    or self._default_class_description(item, profile),
+                        or self._class_description(item, profile, uses),
                     "code": item["body"],
                     "methods": list(item.get("methods") or []),
-                }
-            )
+                    "uses": uses,
+                    "used_by": used_by,
+                })
 
+        # 3. Budget enforcement (keep room for main step)
         has_main = bool(parsed_code.get("main_code"))
         budget = self.config.steps - (1 if has_main else 0)
 
@@ -173,138 +189,660 @@ class TutorialGenerator:
             )
             steps = steps[:budget]
 
+        # 4. Main code
         if has_main:
-            steps.append(
-                {
-                    "step_type": "main",
-                    "title": profile.main_code_title,
-                    "description": self._default_main_description(
-                        parsed_code["main_code"],
-                        profile,
-                    ),
-                    "code": parsed_code["main_code"],
-                }
-            )
+            steps.append({
+                "step_type": "main",
+                "title": profile.main_code_title,
+                "description": self._main_description(
+                    parsed_code["main_code"], profile,
+                ),
+                "code": parsed_code["main_code"],
+            })
 
         return steps
 
+    # ------------------------------------------------------------------
+    # Step decoration — add pedagogy, transitions, exercises
+    # ------------------------------------------------------------------
+
     def _decorate_step(
         self,
-        step: Dict[str, Any],
+        step: dict[str, Any],
         profile: LanguageProfile,
-    ) -> Dict[str, Any]:
+        graph: ProgramAnalysis,
+    ) -> dict[str, Any]:
         if step["step_type"] == "imports":
             return {
                 **step,
+                "transition": None,
                 "spotlight": (
-                    "These lines introduce the outside tools the program needs before any of the"
-                    " core logic can make sense."
+                    "These lines bring in the outside tools the program relies on"
+                    " before any of the core logic begins."
                 ),
                 "key_points": self._import_key_points(step["imports"], profile),
                 "prompts": [
                     f"Which {profile.import_noun} is most important for the rest of the file?",
-                    "What would break first if one of these imports disappeared?",
+                    "What would break first if one of these disappeared?",
                 ],
+                "predict_exercise": self._import_predict(step["imports"], profile),
+                "modify_exercise": (
+                    f"Remove one {profile.import_noun} and predict which line will"
+                    " fail first."
+                ),
                 "practice": (
-                    f"Ask students to point to the first place each {profile.import_noun} becomes"
-                    " useful later in the lesson."
+                    f"Ask students to find where each {profile.import_noun} is first"
+                    " used later in the lesson."
                 ),
             }
 
         if step["step_type"] == "function":
             return {
                 **step,
-                "spotlight": (
-                    f"Focus on how `{step['name']}` turns its inputs into a clear result and"
-                    " what mental model students need to trace it confidently."
-                ),
+                "transition": self._function_transition(step, profile),
+                "spotlight": self._function_spotlight(step, profile),
                 "key_points": self._function_key_points(step, profile),
                 "prompts": self._function_prompts(step, profile),
+                "predict_exercise": self._function_predict(step, profile),
+                "modify_exercise": self._function_modify(step, profile),
                 "practice": self._function_practice(step),
             }
 
         if step["step_type"] == "class":
             return {
                 **step,
+                "transition": self._class_transition(step, profile),
                 "spotlight": (
-                    f"This step shows how `{step['name']}` bundles related data and behavior into"
-                    " one reusable abstraction."
+                    f"`{step['name']}` bundles related data and behavior into one"
+                    f" reusable {step['kind_label']}."
                 ),
                 "key_points": self._class_key_points(step, profile),
                 "prompts": self._class_prompts(step, profile),
+                "predict_exercise": self._class_predict(step, profile),
+                "modify_exercise": self._class_modify(step, profile),
                 "practice": self._class_practice(step, profile),
             }
 
+        # main step
         return {
             **step,
+            "transition": self._main_transition(step, profile, graph),
             "spotlight": (
-                "This is the orchestration step where students connect the earlier building blocks"
-                " into one complete program run."
+                "This is the orchestration step where the earlier building blocks"
+                " run together as a complete program."
             ),
-            "key_points": self._main_code_key_points(step["code"]),
-            "prompts": self._main_code_prompts(step["code"]),
+            "key_points": self._main_key_points(step["code"], profile),
+            "prompts": self._main_prompts(step["code"], profile),
+            "predict_exercise": self._main_predict(step["code"], profile),
+            "modify_exercise": (
+                "Change one input value and predict the new output before running it."
+            ),
             "practice": (
-                "Pause before running this section and ask students to predict the order of calls,"
-                " outputs, or state changes."
+                "Before running this section, ask students to predict the order"
+                " of calls, outputs, or state changes."
             ),
         }
+
+    # ------------------------------------------------------------------
+    # Transition narratives
+    # ------------------------------------------------------------------
+
+    def _function_transition(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> str:
+        uses = step.get("uses", [])
+        if uses:
+            deps = self._join_with_and([f"`{u}`" for u in uses])
+            return (
+                f"With {deps} available, we can now define `{step['name']}`"
+                f" which builds on {'it' if len(uses) == 1 else 'them'}."
+            )
+        return (
+            f"This {profile.function_noun} has no dependencies on other parts"
+            f" of the program, so it is a natural starting point."
+        )
+
+    def _class_transition(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> str:
+        uses = step.get("uses", [])
+        if uses:
+            deps = self._join_with_and([f"`{u}`" for u in uses])
+            return (
+                f"Now that {deps} {'is' if len(uses) == 1 else 'are'} defined,"
+                f" we can build the `{step['name']}` {step['kind_label']}"
+                f" that relies on {'it' if len(uses) == 1 else 'them'}."
+            )
+        return (
+            f"This {step['kind_label']} is self-contained, making it a clean"
+            f" building block to introduce next."
+        )
+
+    def _main_transition(
+        self,
+        step: dict[str, Any],
+        profile: LanguageProfile,
+        graph: ProgramAnalysis,
+    ) -> str:
+        names = [c.name for c in graph.components]
+        if names:
+            pieces = self._join_with_and([f"`{n}`" for n in names[:3]])
+            return (
+                f"Every piece is in place. This final section connects"
+                f" {pieces} into a working program."
+            )
+        return "With all the definitions ready, we can now run the program."
+
+    # ------------------------------------------------------------------
+    # Descriptions
+    # ------------------------------------------------------------------
+
+    def _import_description(
+        self, imports: list[str], profile: LanguageProfile,
+    ) -> str:
+        preview = ", ".join(line.strip() for line in imports[:2])
+        if len(imports) == 1:
+            return (
+                f"This {profile.import_noun} brings in an external dependency"
+                f" the rest of the program needs: {preview}."
+            )
+        return (
+            f"These {self._pluralize(profile.import_noun, len(imports))} prepare"
+            f" the outside tools the program depends on, including {preview}."
+        )
+
+    def _function_description(
+        self,
+        func: dict[str, Any],
+        profile: LanguageProfile,
+        uses: list[str],
+    ) -> str:
+        args = func.get("args") or []
+        parts: list[str] = []
+        if args:
+            arg_list = self._join_with_and([f"`{a}`" for a in args])
+            parts.append(
+                f"`{func['name']}` takes {arg_list} as"
+                f" {'input' if len(args) == 1 else 'inputs'}."
+            )
+        else:
+            parts.append(
+                f"`{func['name']}` takes no explicit inputs."
+            )
+
+        if self._is_recursive(func):
+            parts.append(
+                "It calls itself recursively, so the base case is critical."
+            )
+        elif "return" in func["body"]:
+            parts.append("Pay attention to what it returns and when.")
+
+        if uses:
+            dep_list = self._join_with_and([f"`{u}`" for u in uses])
+            parts.append(f"It relies on {dep_list} defined earlier.")
+
+        return " ".join(parts)
+
+    def _class_description(
+        self,
+        cls: dict[str, Any],
+        profile: LanguageProfile,
+        uses: list[str],
+    ) -> str:
+        kind = cls.get("kind", profile.class_noun)
+        methods = cls.get("methods") or []
+        if methods:
+            method_list = self._join_with_and([f"`{m}`" for m in methods[:3]])
+            base = (
+                f"`{cls['name']}` is a {kind} with"
+                f" {method_list} defining its behavior."
+            )
+        else:
+            base = (
+                f"`{cls['name']}` is a {kind} that captures a reusable structure."
+            )
+        if uses:
+            dep_list = self._join_with_and([f"`{u}`" for u in uses])
+            base += f" Internally it uses {dep_list}."
+        return base
+
+    def _main_description(self, code: str, profile: LanguageProfile) -> str:
+        calls = self._top_level_calls(code, profile)
+        if calls:
+            return (
+                f"The program runs by calling"
+                f" {self._join_with_and([f'`{c}`' for c in calls[:3]])},"
+                f" connecting the earlier definitions into a real result."
+            )
+        return profile.main_code_description
+
+    # ------------------------------------------------------------------
+    # Spotlight
+    # ------------------------------------------------------------------
+
+    def _function_spotlight(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> str:
+        if step.get("is_recursive"):
+            return (
+                f"`{step['name']}` calls itself, so the key question is:"
+                f" where does the recursion stop?"
+            )
+        args = step.get("args") or []
+        if args:
+            return (
+                f"Focus on how `{step['name']}` transforms"
+                f" {'its input' if len(args) == 1 else 'its inputs'}"
+                f" into a result."
+            )
+        return (
+            f"Focus on the internal logic of `{step['name']}` and what"
+            f" effect it produces."
+        )
+
+    # ------------------------------------------------------------------
+    # Key points
+    # ------------------------------------------------------------------
+
+    def _import_key_points(
+        self, imports: list[str], profile: LanguageProfile,
+    ) -> list[str]:
+        preview = ", ".join(line.strip() for line in imports[:3])
+        points = [
+            f"External building blocks introduced here: {preview}.",
+            f"These {self._pluralize(profile.import_noun, len(imports))} frame"
+            " everything that follows.",
+        ]
+        if len(imports) > 1:
+            points.append(
+                "Compare them: which support computation versus input/output?"
+            )
+        return points
+
+    def _function_key_points(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> list[str]:
+        args = step.get("args") or []
+        points: list[str] = []
+        if args:
+            points.append(
+                f"Inputs: {', '.join(f'`{a}`' for a in args)}."
+            )
+        else:
+            points.append("No explicit inputs — focus on the internal flow.")
+
+        if step.get("is_recursive"):
+            points.append("Recursive — trace both the base case and the self-call.")
+
+        if "return" in step["code"]:
+            points.append("Returns a value — ask what and when.")
+
+        kw_pattern = r"\b(if|switch|match)\b"
+        if re.search(kw_pattern, step["code"]):
+            points.append("Contains a decision point — good for branch tracing.")
+
+        uses = step.get("uses", [])
+        if uses:
+            points.append(
+                f"Depends on: {self._join_with_and([f'`{u}`' for u in uses])}."
+            )
+
+        used_by = step.get("used_by", [])
+        if used_by:
+            points.append(
+                f"Used later by: {self._join_with_and([f'`{u}`' for u in used_by])}."
+            )
+
+        return points
+
+    def _class_key_points(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> list[str]:
+        methods = step.get("methods") or []
+        points: list[str] = []
+        if methods:
+            points.append(
+                f"Methods: {', '.join(f'`{m}`' for m in methods)}."
+            )
+        else:
+            points.append(
+                "Mostly about structure — identify what data or contract it represents."
+            )
+
+        if profile.state_tokens and any(
+            tok in step["code"] for tok in profile.state_tokens
+        ):
+            points.append("Carries state that persists across method calls.")
+
+        uses = step.get("uses", [])
+        if uses:
+            points.append(
+                f"Depends on: {self._join_with_and([f'`{u}`' for u in uses])}."
+            )
+
+        points.append(
+            "Ask what responsibilities belong inside this type and what should stay outside."
+        )
+        return points
+
+    def _main_key_points(self, code: str, profile: LanguageProfile) -> list[str]:
+        calls = self._top_level_calls(code, profile)
+        points = [
+            "This is where the earlier pieces come together into a full program run.",
+        ]
+        if calls:
+            points.append(
+                f"Calls to trace: {', '.join(f'`{c}`' for c in calls[:4])}."
+            )
+        points.append(
+            "Students should be able to explain this section using the previous steps."
+        )
+        return points
+
+    # ------------------------------------------------------------------
+    # Discussion prompts
+    # ------------------------------------------------------------------
+
+    def _function_prompts(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> list[str]:
+        args = step.get("args") or []
+        prompts = [
+            f"What single job does `{step['name']}` do for the rest of the program?",
+        ]
+        if args:
+            prompts.append(
+                f"Which input changes the behavior of `{step['name']}` the most:"
+                f" {', '.join(f'`{a}`' for a in args)}?"
+            )
+        if step.get("used_by"):
+            prompts.append(
+                f"What would break if `{step['name']}` returned a different type?"
+            )
+        return prompts
+
+    def _class_prompts(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> list[str]:
+        prompts = [
+            f"What problem does `{step['name']}` solve better as a"
+            f" {step.get('kind_label', profile.class_noun)} than as loose code?",
+        ]
+        methods = step.get("methods") or []
+        if methods:
+            prompts.append(
+                f"Which {profile.method_noun} is the best starting point for"
+                f" understanding `{step['name']}`?"
+            )
+        return prompts
+
+    def _main_prompts(self, code: str, profile: LanguageProfile) -> list[str]:
+        calls = self._top_level_calls(code, profile)
+        prompts = ["What happens first, second, and third when this section runs?"]
+        if calls:
+            prompts.append(
+                f"Which earlier definition explains the behavior of `{calls[0]}`?"
+            )
+        return prompts
+
+    # ------------------------------------------------------------------
+    # Exercises — predict & modify
+    # ------------------------------------------------------------------
+
+    def _import_predict(
+        self, imports: list[str], profile: LanguageProfile,
+    ) -> str:
+        if len(imports) == 1:
+            return (
+                f"If this {profile.import_noun} were missing, which line"
+                " would fail first?"
+            )
+        return (
+            f"If you removed the last {profile.import_noun}, which later line"
+            " would be the first to fail?"
+        )
+
+    def _function_predict(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> str:
+        args = step.get("args") or []
+        if step.get("is_recursive") and args:
+            return (
+                f"Trace `{step['name']}({args[0]}=3)` by hand."
+                f" How many times does it call itself before returning?"
+            )
+        if args:
+            return (
+                f"Pick a simple value for"
+                f" `{args[0]}` and predict what `{step['name']}` returns."
+            )
+        return f"What does `{step['name']}()` produce when called?"
+
+    def _function_modify(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> str:
+        if step.get("is_recursive"):
+            return (
+                f"Change the base case in `{step['name']}`. What happens"
+                " to the recursion?"
+            )
+        args = step.get("args") or []
+        if args:
+            return (
+                f"Add a new parameter to `{step['name']}` and predict what"
+                " else needs to change."
+            )
+        return (
+            f"Make `{step['name']}` accept one input it currently does not."
+            " What would you pass in?"
+        )
+
+    def _class_predict(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> str:
+        methods = step.get("methods") or []
+        if methods:
+            return (
+                f"Create an instance of `{step['name']}` and call"
+                f" `{methods[0]}`. What do you get back?"
+            )
+        return f"What data does a new `{step['name']}` instance start with?"
+
+    def _class_modify(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> str:
+        return (
+            f"Add one new {profile.method_noun} to `{step['name']}` that"
+            " would make it more useful. Justify why that behavior belongs here."
+        )
+
+    def _main_predict(self, code: str, profile: LanguageProfile) -> str:
+        calls = self._top_level_calls(code, profile)
+        if calls:
+            return (
+                f"Before running, predict the output of the `{calls[0]}`"
+                " call in this section."
+            )
+        return "Before running, write down what you expect the output to be."
+
+    # ------------------------------------------------------------------
+    # Practice / hands-on
+    # ------------------------------------------------------------------
+
+    def _function_practice(self, step: dict[str, Any]) -> str:
+        args = step.get("args") or []
+        if args:
+            return (
+                f"Change one argument to `{step['name']}` and predict the"
+                " new result before running the code."
+            )
+        return (
+            f"Ask students how `{step['name']}` would need to change"
+            " if it accepted one extra input."
+        )
+
+    def _class_practice(
+        self, step: dict[str, Any], profile: LanguageProfile,
+    ) -> str:
+        return (
+            f"Ask students to add one new {profile.method_noun} to"
+            f" `{step['name']}` and explain what behavior it should own."
+        )
+
+    # ------------------------------------------------------------------
+    # Sections
+    # ------------------------------------------------------------------
+
+    def _build_complete_program(self, parsed_code: ParseResult) -> str:
+        parts: list[str] = []
+        if parsed_code.get("imports"):
+            parts.append("\n".join(parsed_code["imports"]))
+        for func in parsed_code.get("functions", []):
+            parts.append(func["body"])
+        for cls in parsed_code.get("classes", []):
+            parts.append(cls["body"])
+        if parsed_code.get("main_code"):
+            parts.append(parsed_code["main_code"])
+        return "\n\n".join(parts)
 
     def _build_overview(
         self,
         parsed_code: ParseResult,
         profile: LanguageProfile,
-        steps: List[Dict[str, Any]],
+        steps: list[dict[str, Any]],
+        graph: ProgramAnalysis,
     ) -> str:
-        lesson_parts = []
-        if parsed_code.get("imports"):
-            lesson_parts.append(
-                f"{len(parsed_code['imports'])} {self._pluralize(profile.import_noun, len(parsed_code['imports']))}"
-            )
-        if parsed_code.get("functions"):
-            lesson_parts.append(
-                f"{len(parsed_code['functions'])} {self._pluralize(profile.function_noun, len(parsed_code['functions']))}"
-            )
-        if parsed_code.get("classes"):
-            lesson_parts.append(
-                f"{len(parsed_code['classes'])} {self._pluralize(profile.class_noun, len(parsed_code['classes']))}"
-            )
-        if parsed_code.get("main_code"):
-            lesson_parts.append("a final execution flow")
+        component_text = self._component_summary(parsed_code, profile)
+        concept_text = self._join_with_and(graph.concepts)
 
-        concept_text = self._join_with_and(self._concepts(parsed_code))
-        if lesson_parts:
+        if component_text != "code-reading only":
             base = (
-                f"This {profile.display_name} lesson breaks the program into {len(steps)}"
-                f" teaching {'step' if len(steps) == 1 else 'steps'}, covering"
-                f" {self._join_with_and(lesson_parts)}."
+                f"This {profile.display_name} lesson builds the program"
+                f" step by step across {len(steps)}"
+                f" teaching {'step' if len(steps) == 1 else 'steps'},"
+                f" covering {component_text}."
             )
         else:
             base = (
-                f"This {profile.display_name} lesson focuses on reading the code carefully and"
-                " explaining how each section contributes to the whole program."
+                f"This {profile.display_name} lesson focuses on reading"
+                " the code carefully and explaining how each section"
+                " contributes to the whole program."
             )
 
         if concept_text:
             return f"{base} Along the way, students will encounter {concept_text}."
         return base
 
+    def _build_warm_up(
+        self,
+        parsed_code: ParseResult,
+        profile: LanguageProfile,
+        graph: ProgramAnalysis,
+    ) -> str:
+        if "recursion" in graph.concepts:
+            return (
+                "Ask students what has to be true for a recursive call to stop,"
+                " then have them predict where that stopping case appears."
+            )
+        if parsed_code.get("classes"):
+            return (
+                f"Ask why someone might choose a {profile.class_noun} instead"
+                " of scattered variables and helper code for this problem."
+            )
+        if parsed_code.get("imports"):
+            noun = self._pluralize(
+                profile.import_noun, len(parsed_code["imports"]),
+            )
+            return (
+                f"Ask students what this program would have to build from"
+                f" scratch if these {noun} were missing."
+            )
+        if parsed_code.get("functions"):
+            noun = self._pluralize(
+                profile.function_noun, len(parsed_code["functions"]),
+            )
+            return (
+                f"Ask students why breaking a problem into separate {noun}"
+                " makes a program easier to understand and debug."
+            )
+        return (
+            "Ask students to scan the file for the first line that changes"
+            " state or produces output, then explain why that line matters."
+        )
+
+    def _build_vocabulary(
+        self,
+        parsed_code: ParseResult,
+        profile: LanguageProfile,
+        graph: ProgramAnalysis,
+    ) -> list[str]:
+        vocab: list[str] = []
+        if parsed_code.get("imports"):
+            vocab.append(
+                f"`{profile.import_noun}`: code this file pulls in before"
+                " the main logic starts."
+            )
+        if parsed_code.get("functions"):
+            vocab.append("`parameter`: a named input a function receives.")
+            vocab.append(
+                "`return value`: the result a function gives back to its caller."
+            )
+        if parsed_code.get("classes"):
+            vocab.append(
+                f"`{profile.class_noun}`: a reusable unit that groups"
+                " related data and behavior."
+            )
+            vocab.append(
+                f"`{profile.method_noun}`: a behavior that belongs to a"
+                f" specific {profile.class_noun}."
+            )
+            vocab.append("`state`: information an object keeps between actions.")
+
+        if "recursion" in graph.concepts:
+            vocab.append(
+                "`recursion`: solving a problem by calling the same function"
+                " on a smaller case."
+            )
+        if "iteration" in graph.concepts:
+            vocab.append("`iteration`: repeating work with a loop.")
+        if "control flow" in graph.concepts:
+            vocab.append(
+                "`control flow`: the decisions that determine which lines"
+                " run next."
+            )
+        if "error handling" in graph.concepts:
+            vocab.append(
+                "`error handling`: detecting and responding to problems at runtime."
+            )
+
+        return list(dict.fromkeys(vocab))[:8]
+
     def _build_learning_goals(
         self,
         parsed_code: ParseResult,
         profile: LanguageProfile,
-    ) -> List[str]:
-        goals: List[str] = []
+        graph: ProgramAnalysis,
+    ) -> list[str]:
+        goals: list[str] = []
         if parsed_code.get("imports"):
             goals.append(
-                f"Explain why each {profile.import_noun} appears before the main logic begins."
+                f"Explain why each {profile.import_noun} appears before"
+                " the main logic begins."
             )
         if parsed_code.get("functions"):
             goals.append(
-                f"Trace how each {profile.function_noun} uses inputs, decisions, and return values."
+                f"Trace how each {profile.function_noun} uses inputs,"
+                " decisions, and return values."
             )
         if parsed_code.get("classes"):
             goals.append(
-                f"Describe how each {profile.class_noun} groups responsibilities and manages state."
+                f"Describe how each {profile.class_noun} groups"
+                " responsibilities and manages state."
+            )
+        if len(graph.call_graph) > 1:
+            goals.append(
+                "Explain how components depend on one another by following"
+                " the call chain."
             )
         if parsed_code.get("main_code"):
             goals.append(
@@ -312,295 +850,164 @@ class TutorialGenerator:
             )
         if not goals:
             goals.append(
-                "Read unfamiliar code methodically and explain what happens in each section."
+                "Read unfamiliar code methodically and explain what happens"
+                " in each section."
             )
-        return goals[:4]
+        return goals[:5]
 
-    def _build_teaching_tips(self, parsed_code: ParseResult) -> List[str]:
+    def _build_teaching_tips(
+        self,
+        parsed_code: ParseResult,
+        profile: LanguageProfile,
+        graph: ProgramAnalysis,
+    ) -> list[str]:
         tips = [
-            "Ask students to predict what the code will do before you reveal the explanation or run it.",
-            "Have learners annotate where data enters, changes, and leaves the program.",
-            "Pause after each step and connect it back to the overall goal of the program.",
+            "Ask students to predict what the code will do before you"
+            " reveal the explanation or run it.",
+            "Have learners annotate where data enters, changes, and leaves"
+            " the program.",
+            "Pause after each step and connect it back to the overall goal.",
         ]
-        functions = parsed_code.get("functions", [])
-        if any(self._is_recursive(func) for func in functions):
+        if "recursion" in graph.concepts:
             tips.append(
-                "For recursion, trace one concrete call stack on paper and mark the stopping case before running the code."
+                "For recursion, trace one concrete call stack on paper and"
+                " mark the stopping case before running the code."
             )
         if parsed_code.get("classes"):
             tips.append(
-                "Separate what the type knows (state) from what it does (methods) so object-oriented structure feels less abstract."
+                f"Separate what the {profile.class_noun} knows (state)"
+                f" from what it does ({profile.method_noun}s) so"
+                " object-oriented structure feels less abstract."
+            )
+        if len(graph.call_graph) > 1:
+            tips.append(
+                "Use the dependency map to show students the order in which"
+                " pieces build on each other."
             )
         if parsed_code.get("main_code"):
             tips.append(
-                "Use the final execution step as a recap: students should be able to explain every call it makes."
+                "Use the final execution step as a recap: students should"
+                " be able to explain every call it makes."
             )
-        return tips[:5]
-
-    def _build_recap_points(self, steps: List[Dict[str, Any]]) -> List[str]:
-        return [self._step_takeaway(step) for step in steps[:4]]
-
-    def _build_lesson_stats(
-        self,
-        parsed_code: ParseResult,
-        profile: LanguageProfile,
-        steps: List[Dict[str, Any]],
-    ) -> List[str]:
-        components = self._component_summary(parsed_code, profile)
-        concepts = self._concepts(parsed_code)
-        return [
-            f"Language: {profile.display_name}",
-            f"Suggested level: {self._estimate_difficulty(parsed_code, steps)}",
-            f"Estimated pacing: {self._estimate_pacing(steps)}",
-            f"Lesson steps: {len(steps)}",
-            f"Components covered: {components}",
-            f"Core concepts: {self._join_with_and(concepts) or 'program flow'}",
-        ]
-
-    def _build_warm_up(
-        self,
-        parsed_code: ParseResult,
-        profile: LanguageProfile,
-    ) -> str:
-        functions = parsed_code.get("functions", [])
-        if any(self._is_recursive(func) for func in functions):
-            return (
-                "Ask students what has to be true for a recursive call to stop, then have them"
-                " predict where that stopping case appears in the code."
-            )
-        if parsed_code.get("classes"):
-            return (
-                f"Ask why someone might choose a {profile.class_noun} instead of scattered"
-                " variables and helper code when solving this problem."
-            )
-        if parsed_code.get("imports"):
-            return (
-                f"Ask students what this program would have to build from scratch if these"
-                f" {self._pluralize(profile.import_noun, len(parsed_code['imports']))} were missing."
-            )
-        if parsed_code.get("functions"):
-            return (
-                f"Ask students why breaking a problem into separate {self._pluralize(profile.function_noun, len(parsed_code['functions']))}"
-                " can make a program easier to understand and debug."
-            )
-        return (
-            "Ask students to scan the file for the first line that changes state or produces an output,"
-            " then explain why that line matters."
-        )
-
-    def _build_vocabulary(
-        self,
-        parsed_code: ParseResult,
-        profile: LanguageProfile,
-    ) -> List[str]:
-        vocabulary: List[str] = []
-        if parsed_code.get("imports"):
-            vocabulary.append(
-                f"`{profile.import_noun}`: code this file pulls in before the main logic starts."
-            )
-        if parsed_code.get("functions"):
-            vocabulary.append("`parameter`: a named input a function receives.")
-            vocabulary.append("`return value`: the result a function gives back to its caller.")
-        if parsed_code.get("classes"):
-            vocabulary.append(
-                f"`{profile.class_noun}`: a reusable unit that groups related data and behavior."
-            )
-            vocabulary.append(
-                f"`{profile.method_noun}`: a behavior that belongs to a specific {profile.class_noun}."
-            )
-            vocabulary.append("`state`: information an object keeps track of between actions.")
-
-        concepts = self._concepts(parsed_code)
-        if "recursion" in concepts:
-            vocabulary.append(
-                "`recursion`: solving a problem by calling the same function on a smaller case."
-            )
-        if "iteration" in concepts:
-            vocabulary.append("`iteration`: repeating work with a loop.")
-        if "control flow" in concepts:
-            vocabulary.append(
-                "`control flow`: the decisions that determine which lines run next."
-            )
-
-        deduped: List[str] = []
-        for item in vocabulary:
-            if item not in deduped:
-                deduped.append(item)
-        return deduped[:6]
+        return tips[:6]
 
     def _build_checks_for_understanding(
         self,
-        steps: List[Dict[str, Any]],
-    ) -> List[str]:
+        steps: list[dict[str, Any]],
+        graph: ProgramAnalysis,
+    ) -> list[str]:
         questions = [
             "Where does data enter the program, and where does it leave?",
-            "Which step would you revisit first if the final output looked wrong?",
+            "Which step would you revisit first if the final output were wrong?",
         ]
-        first_named_step = next(
-            (
-                step
-                for step in steps
-                if step["step_type"] in {"function", "class"}
-            ),
+        first_named = next(
+            (s for s in steps if s["step_type"] in {"function", "class"}),
             None,
         )
-        if first_named_step is not None:
+        if first_named is not None:
             questions.insert(
                 0,
-                f"What essential job would disappear if `{first_named_step['name']}` were removed?",
+                f"What essential job would disappear if"
+                f" `{first_named['name']}` were removed?",
             )
-        if any(step["step_type"] == "main" for step in steps):
+
+        if len(graph.call_graph) > 1:
             questions.append(
-                "Which earlier definition does the final execution step rely on first?"
+                "Trace the dependency chain from the first function to the"
+                " last. What order do they need to be called in?"
             )
-        return questions[:4]
+
+        if any(s["step_type"] == "main" for s in steps):
+            questions.append(
+                "Which earlier definition does the final execution step"
+                " rely on first?"
+            )
+        return questions[:5]
 
     def _build_extension_challenge(
         self,
         parsed_code: ParseResult,
         profile: LanguageProfile,
+        graph: ProgramAnalysis,
     ) -> str:
-        functions = parsed_code.get("functions", [])
-        if any(self._is_recursive(func) for func in functions):
+        if "recursion" in graph.concepts:
             return (
-                "Rewrite the recursive logic in an iterative style, then compare which version is"
-                " easier to explain and why."
+                "Rewrite the recursive logic iteratively, then compare"
+                " which version is easier to explain and why."
             )
         if parsed_code.get("classes"):
             first_class = parsed_code["classes"][0]["name"]
             return (
-                f"Add one new {profile.method_noun} to `{first_class}` that would make the type"
-                " more useful, and justify why that behavior belongs there."
+                f"Add one new {profile.method_noun} to `{first_class}`"
+                " that makes the type more useful, and justify why"
+                " that behavior belongs there."
             )
+        functions = parsed_code.get("functions", [])
         if functions:
-            first_function = functions[0]["name"]
+            first_func = functions[0]["name"]
             return (
-                f"Modify `{first_function}` to handle one new edge case, and have students predict"
-                " which lines would need to change before they edit the code."
+                f"Modify `{first_func}` to handle one new edge case,"
+                " and predict which lines need to change before editing."
             )
         if parsed_code.get("imports"):
             return (
-                f"Replace one imported helper with your own implementation and discuss what tradeoff"
-                f" that creates for readability versus control."
+                "Replace one imported helper with your own implementation"
+                " and discuss the tradeoff for readability versus control."
             )
         return (
-            "Change one input, constant, or branch condition in the program and ask students to"
-            " predict the new behavior before running it."
+            "Change one input, constant, or branch condition and predict"
+            " the new behavior before running it."
         )
 
-    def _default_import_description(
-        self,
-        imports: List[str],
-        profile: LanguageProfile,
-    ) -> str:
-        preview = ", ".join(line.strip() for line in imports[:2])
-        if len(imports) == 1:
-            return (
-                f"This {profile.import_noun} sets up an external dependency the rest of the program"
-                f" expects to use: {preview}."
-            )
-        return (
-            f"These {self._pluralize(profile.import_noun, len(imports))} prepare the outside tools"
-            f" the program depends on, including {preview}."
-        )
+    def _build_recap_points(self, steps: list[dict[str, Any]]) -> list[str]:
+        return [self._step_takeaway(s) for s in steps[:5]]
 
-    def _default_function_description(
-        self,
-        func: Dict[str, Any],
-        profile: LanguageProfile,
-    ) -> str:
-        args = func.get("args") or []
-        parts = [f"`{func['name']}` gives students a focused {profile.function_noun} to trace."]
-        if args:
-            parts.append(
-                f"It takes {self._join_with_and([f'`{arg}`' for arg in args])} as input."
-            )
-        if self._is_recursive(func):
-            parts.append("The recursive self-call makes the stopping case especially important.")
-        elif "return" in func["body"]:
-            parts.append("Students should pay attention to how the returned value is produced.")
-        if re.search(r"\bif\b|\bswitch\b|\bmatch\b", func["body"]):
-            parts.append("There is a decision point here, so branch tracing matters.")
-        return " ".join(parts)
-
-    def _default_class_description(
-        self,
-        cls: Dict[str, Any],
-        profile: LanguageProfile,
-    ) -> str:
-        kind = cls.get("kind", profile.class_noun)
-        methods = cls.get("methods") or []
-        if methods:
-            method_list = self._join_with_and([f"`{method}`" for method in methods[:3]])
-            return (
-                f"`{cls['name']}` is a {kind} that groups related behavior together. Students can"
-                f" use {method_list} to see how responsibilities are divided inside the type."
-            )
-        return (
-            f"`{cls['name']}` is a {kind} that represents a reusable structure. Ask students what"
-            " data or contract it is meant to capture."
-        )
-
-    def _default_main_description(
-        self,
-        code: str,
-        profile: LanguageProfile,
-    ) -> str:
-        calls = self._top_level_calls(code)
-        if calls:
-            return (
-                f"This final section turns the earlier definitions into a real program run by"
-                f" calling {self._join_with_and([f'`{call}`' for call in calls[:3]])}."
-            )
-        return profile.main_code_description
-
-    @staticmethod
-    def _ordered_definitions(parsed_code: ParseResult) -> List[tuple[str, Dict[str, Any]]]:
-        ordered: List[tuple[int, int, str, Dict[str, Any]]] = []
-        fallback_line = 10**9
-
-        for index, func in enumerate(parsed_code.get("functions", [])):
-            ordered.append(
-                (
-                    func.get("source_line", fallback_line + index),
-                    index,
-                    "function",
-                    func,
-                )
-            )
-
-        function_count = len(parsed_code.get("functions", []))
-        for index, cls in enumerate(parsed_code.get("classes", [])):
-            ordered.append(
-                (
-                    cls.get("source_line", fallback_line + function_count + index),
-                    function_count + index,
-                    "class",
-                    cls,
-                )
-            )
-
-        ordered.sort(key=lambda item: (item[0], item[1]))
-        return [(item_type, item) for _, _, item_type, item in ordered]
-
-    def _component_summary(
+    def _build_lesson_stats(
         self,
         parsed_code: ParseResult,
         profile: LanguageProfile,
+        steps: list[dict[str, Any]],
+        graph: ProgramAnalysis,
+    ) -> list[str]:
+        return [
+            f"Language: {profile.display_name}",
+            f"Suggested level: {self._estimate_difficulty(parsed_code, steps, graph)}",
+            f"Estimated pacing: {self._estimate_pacing(steps)}",
+            f"Lesson steps: {len(steps)}",
+            f"Components covered: {self._component_summary(parsed_code, profile)}",
+            f"Core concepts: {self._join_with_and(graph.concepts) or 'program flow'}",
+        ]
+
+    def _build_dependency_map(self, graph: ProgramAnalysis) -> list[dict[str, str]]:
+        rows: list[dict[str, str]] = []
+        for comp in graph.components:
+            rows.append({
+                "name": comp.name,
+                "kind": comp.kind,
+                "uses": self._join_with_and([f"`{u}`" for u in comp.calls]) or "---",
+                "used_by": self._join_with_and(
+                    [f"`{u}`" for u in comp.called_by]
+                ) or "---",
+            })
+        return rows
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _component_summary(
+        self, parsed_code: ParseResult, profile: LanguageProfile,
     ) -> str:
-        parts = []
+        parts: list[str] = []
         if parsed_code.get("imports"):
-            parts.append(
-                f"{len(parsed_code['imports'])} {self._pluralize(profile.import_noun, len(parsed_code['imports']))}"
-            )
+            n = len(parsed_code["imports"])
+            parts.append(f"{n} {self._pluralize(profile.import_noun, n)}")
         if parsed_code.get("functions"):
-            parts.append(
-                f"{len(parsed_code['functions'])} {self._pluralize(profile.function_noun, len(parsed_code['functions']))}"
-            )
+            n = len(parsed_code["functions"])
+            parts.append(f"{n} {self._pluralize(profile.function_noun, n)}")
         if parsed_code.get("classes"):
-            parts.append(
-                f"{len(parsed_code['classes'])} {self._pluralize(profile.class_noun, len(parsed_code['classes']))}"
-            )
+            n = len(parsed_code["classes"])
+            parts.append(f"{n} {self._pluralize(profile.class_noun, n)}")
         if parsed_code.get("main_code"):
             parts.append("a final execution flow")
         return self._join_with_and(parts) or "code-reading only"
@@ -608,11 +1015,14 @@ class TutorialGenerator:
     def _estimate_difficulty(
         self,
         parsed_code: ParseResult,
-        steps: List[Dict[str, Any]],
+        steps: list[dict[str, Any]],
+        graph: ProgramAnalysis,
     ) -> str:
-        score = len(steps) + len(self._concepts(parsed_code))
-        if any(self._is_recursive(func) for func in parsed_code.get("functions", [])):
+        score = len(steps) + len(graph.concepts)
+        if "recursion" in graph.concepts:
             score += 2
+        if "error handling" in graph.concepts:
+            score += 1
         if parsed_code.get("classes"):
             score += 1
         if score <= 4:
@@ -622,204 +1032,52 @@ class TutorialGenerator:
         return "Advanced"
 
     @staticmethod
-    def _estimate_pacing(steps: List[Dict[str, Any]]) -> str:
+    def _estimate_pacing(steps: list[dict[str, Any]]) -> str:
         if len(steps) <= 2:
             return "10-15 minutes"
         if len(steps) <= 4:
             return "20-30 minutes"
         return "35-45 minutes"
 
-    def _step_takeaway(self, step: Dict[str, Any]) -> str:
+    def _step_takeaway(self, step: dict[str, Any]) -> str:
         if step["step_type"] == "imports":
-            return f"{step['title']}: students can explain what the program needs before it begins."
-        if step["step_type"] == "function":
-            return f"{step['title']}: trace the inputs, decisions, and outputs inside `{step['name']}`."
-        if step["step_type"] == "class":
-            return f"{step['title']}: explain what responsibility `{step['name']}` owns."
-        return f"{step['title']}: connect the earlier building blocks into one full execution."
-
-    def _import_key_points(
-        self,
-        imports: List[str],
-        profile: LanguageProfile,
-    ) -> List[str]:
-        preview = ", ".join(line.strip() for line in imports[:3])
-        points = [
-            f"Students can identify the external building blocks introduced here: {preview}.",
-            "Imports frame the rest of the lesson by naming the tools the program depends on.",
-        ]
-        if len(imports) > 1:
-            points.append(
-                "Compare the imports and ask which ones support computation versus input/output."
-            )
-        return points
-
-    def _function_key_points(
-        self,
-        step: Dict[str, Any],
-        profile: LanguageProfile,
-    ) -> List[str]:
-        args = step.get("args") or []
-        points = []
-        if args:
-            points.append(f"Inputs to track: {', '.join(f'`{arg}`' for arg in args)}.")
-        else:
-            points.append(
-                f"This {profile.function_noun} takes no explicit inputs, so students can focus on its internal flow."
-            )
-        if step.get("is_recursive"):
-            points.append(
-                "It is recursive, so students should trace both the stopping case and the self-call."
-            )
-        if "return" in step["code"]:
-            points.append(
-                "It produces a value, so learners can ask what gets returned and when."
-            )
-        if re.search(r"\bif\b|\bswitch\b|\bmatch\b", step["code"]):
-            points.append(
-                "There is a decision point here, which makes it a good place to practice branch tracing."
-            )
-        return points
-
-    def _function_prompts(
-        self,
-        step: Dict[str, Any],
-        profile: LanguageProfile,
-    ) -> List[str]:
-        args = step.get("args") or []
-        prompts = [
-            f"What single responsibility does `{step['name']}` have in the larger program?",
-        ]
-        if args:
-            prompts.append(
-                f"Which input changes the behavior of `{step['name']}` the most: {', '.join(f'`{arg}`' for arg in args)}?"
-            )
-        else:
-            prompts.append(
-                f"What hidden assumptions does `{step['name']}` make when it runs?"
-            )
-        return prompts
-
-    def _function_practice(self, step: Dict[str, Any]) -> str:
-        args = step.get("args") or []
-        if args:
             return (
-                f"Change one argument to `{step['name']}` and ask students to predict the new"
-                " result before running the code."
+                f"{step['title']}: students can explain what the program"
+                " needs before it begins."
+            )
+        if step["step_type"] == "function":
+            return (
+                f"{step['title']}: trace the inputs, decisions, and outputs"
+                f" inside `{step['name']}`."
+            )
+        if step["step_type"] == "class":
+            return (
+                f"{step['title']}: explain what responsibility"
+                f" `{step['name']}` owns."
             )
         return (
-            f"Ask students how `{step['name']}` would need to change if it accepted one extra input."
+            f"{step['title']}: connect the earlier building blocks"
+            " into one full execution."
         )
-
-    def _class_key_points(
-        self,
-        step: Dict[str, Any],
-        profile: LanguageProfile,
-    ) -> List[str]:
-        methods = step.get("methods") or []
-        points = []
-        if methods:
-            points.append(
-                f"Methods to track: {', '.join(f'`{method}`' for method in methods)}."
-            )
-        else:
-            points.append(
-                "This type is mostly about structure, so students should identify what data or contract it represents."
-            )
-        if any(token in step["code"] for token in ("self.", "this.", "Host ", "Port ")):
-            points.append(
-                "It carries state, which makes it useful for discussing how data persists across method calls."
-            )
-        points.append(
-            "Ask what responsibilities belong inside this type and what should stay outside it."
-        )
-        return points
-
-    def _class_prompts(
-        self,
-        step: Dict[str, Any],
-        profile: LanguageProfile,
-    ) -> List[str]:
-        prompts = [
-            f"What problem does `{step['name']}` solve better as a grouped {profile.class_noun} than as free-standing code?",
-        ]
-        methods = step.get("methods") or []
-        if methods:
-            prompts.append(
-                f"Which {profile.method_noun} is the best entry point for explaining the behavior of `{step['name']}`?"
-            )
-        return prompts
-
-    def _class_practice(
-        self,
-        step: Dict[str, Any],
-        profile: LanguageProfile,
-    ) -> str:
-        return (
-            f"Ask students to add one new {profile.method_noun} to `{step['name']}` and explain"
-            " what behavior it should own."
-        )
-
-    def _main_code_key_points(self, code: str) -> List[str]:
-        calls = self._top_level_calls(code)
-        points = [
-            "This is where the earlier pieces come together into a full program run.",
-        ]
-        if calls:
-            points.append(
-                f"Top-level calls worth tracing: {', '.join(f'`{call}`' for call in calls[:4])}."
-            )
-        points.append(
-            "Students should be able to explain this section using the previous steps without rereading every line."
-        )
-        return points
-
-    def _main_code_prompts(self, code: str) -> List[str]:
-        calls = self._top_level_calls(code)
-        prompts = ["What happens first, second, and third when this section runs?"]
-        if calls:
-            prompts.append(
-                f"Which earlier definition explains the behavior of `{calls[0]}`?"
-            )
-        return prompts
-
-    def _concepts(self, parsed_code: ParseResult) -> List[str]:
-        concepts: List[str] = []
-        functions = parsed_code.get("functions", [])
-        if any(self._is_recursive(func) for func in functions):
-            concepts.append("recursion")
-        if parsed_code.get("classes"):
-            concepts.append("state and abstraction")
-        if parsed_code.get("imports"):
-            concepts.append("dependencies")
-        bodies = "\n".join(
-            [func["body"] for func in functions]
-            + [cls["body"] for cls in parsed_code.get("classes", [])]
-            + [parsed_code.get("main_code", "")]
-        )
-        if re.search(r"\bfor\b|\bwhile\b", bodies):
-            concepts.append("iteration")
-        if re.search(r"\bif\b|\bswitch\b|\bmatch\b", bodies):
-            concepts.append("control flow")
-        deduped: List[str] = []
-        for concept in concepts:
-            if concept not in deduped:
-                deduped.append(concept)
-        return deduped[:3]
 
     @staticmethod
-    def _is_recursive(func: Dict[str, Any]) -> bool:
-        body = func["body"].split("\n", 1)[1] if "\n" in func["body"] else func["body"]
-        return re.search(rf"\b{re.escape(func['name'])}\s*\(", body) is not None
+    def _is_recursive(func: dict[str, Any]) -> bool:
+        body = func["body"]
+        lines = body.split("\n")
+        search_text = "\n".join(lines[1:]) if len(lines) > 1 else ""
+        return re.search(
+            rf"\b{re.escape(func['name'])}\s*\(", search_text,
+        ) is not None
 
-    @staticmethod
-    def _top_level_calls(code: str) -> List[str]:
+    def _top_level_calls(self, code: str, profile: LanguageProfile) -> list[str]:
+        builtins = set(profile.builtin_calls)
+        noise = {"if", "for", "while", "switch", "match", "else", "elif", "case"}
         calls = re.findall(r"(?<!\.)\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", code)
-        seen: List[str] = []
+        seen: list[str] = []
         for call in calls:
-            if call in _NON_TEACHING_CALLS:
+            if call in builtins or call in noise:
                 continue
-            if call not in seen and call not in {"if", "for", "while", "switch", "match"}:
+            if call not in seen:
                 seen.append(call)
         return seen
 
@@ -832,7 +1090,7 @@ class TutorialGenerator:
         return f"{word}s"
 
     @staticmethod
-    def _join_with_and(items: List[str]) -> str:
+    def _join_with_and(items: list[str]) -> str:
         if not items:
             return ""
         if len(items) == 1:

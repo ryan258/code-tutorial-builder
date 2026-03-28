@@ -1,5 +1,5 @@
 import pytest
-from code_tutorial_builder.parser import PythonParser
+from code_tutorial_builder.languages import PythonParser
 
 
 class TestPythonParser:

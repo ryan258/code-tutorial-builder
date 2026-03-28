@@ -2,8 +2,8 @@ from pathlib import Path
 
 import click
 
+from .config import Config, VALID_FORMATS
 from .generator import TutorialGenerator
-from .config import Config
 
 
 @click.command()
@@ -13,9 +13,12 @@ from .config import Config
 @click.option('--template', '-t', default=None, help='Custom Jinja2 template file')
 @click.option('--title', default=None, help='Custom tutorial title')
 @click.option('--language', '-l', default=None, help='Override language detection (python, javascript, go, ...)')
+@click.option('--format', '-f', 'output_format', default='lesson',
+              type=click.Choice(VALID_FORMATS, case_sensitive=False),
+              help='Output format (lesson = teacher plan, handout = student facing)')
 @click.option('--ai/--no-ai', default=False, help='Use OpenRouter settings from .env to improve step titles and descriptions')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def main(input_file, output_file, steps, template, title, language, ai, verbose):
+def main(input_file, output_file, steps, template, title, language, output_format, ai, verbose):
     """Convert working code into step-by-step lessons."""
     from .languages import detect_language, get_parser
 
@@ -35,6 +38,7 @@ def main(input_file, output_file, steps, template, title, language, ai, verbose)
     config = Config(
         steps=steps,
         template=template,
+        output_format=output_format,
         use_ai=ai,
         env_search_path=input_file,
     )

@@ -36,7 +36,7 @@ def get_parser(language: str) -> BaseParser:
     For everything else: returns TreeSitterParser (requires optional dep).
     """
     if language == "python":
-        from ..parser import PythonParser
+        from ._python_parser import PythonParser
         return PythonParser()
 
     try:

@@ -12,9 +12,17 @@ profile = LanguageProfile(
     method_noun="method",
     import_noun="import",
     import_step_title="Importing Packages",
-    import_step_description="First, we import the necessary Java packages.",
     main_code_title="Main Method",
     main_code_description="This is the entry point of the application.",
+    builtin_calls=(
+        "System", "String", "Integer", "Double", "Boolean", "Object",
+        "Math", "Arrays", "Collections", "List", "Map", "Set",
+        "ArrayList", "HashMap", "HashSet", "Optional",
+    ),
+    state_tokens=("this.",),
+    iteration_keywords=("for", "while", "forEach", "stream"),
+    branch_keywords=("if", "else", "switch", "case"),
+    error_keywords=("try", "catch", "finally", "throw", "throws"),
     function_node_types=(),  # Java methods live inside classes
     class_node_types=("class_declaration", "interface_declaration"),
     import_node_types=("import_declaration",),
