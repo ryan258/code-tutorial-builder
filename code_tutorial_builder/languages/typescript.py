@@ -28,7 +28,7 @@ profile = LanguageProfile(
     function_node_types=("function_declaration",),
     class_node_types=("class_declaration", "interface_declaration"),
     import_node_types=("import_statement",),
-    method_node_types=("method_definition", "public_field_definition"),
+    method_node_types=("method_definition",),
 )
 
 register(profile)

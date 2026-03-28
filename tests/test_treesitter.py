@@ -138,6 +138,31 @@ class TestRustParser:
         assert result["classes"][0]["name"] == "Color"
         assert result["classes"][0]["kind"] == "enum"
 
+    def test_parse_impl_block(self):
+        code = (
+            "struct Point {\n"
+            "    x: f64,\n"
+            "    y: f64,\n"
+            "}\n"
+            "\n"
+            "impl Point {\n"
+            "    fn new(x: f64, y: f64) -> Self {\n"
+            "        Point { x, y }\n"
+            "    }\n"
+            "    fn distance(&self) -> f64 {\n"
+            "        (self.x * self.x + self.y * self.y).sqrt()\n"
+            "    }\n"
+            "}\n"
+        )
+        result = self.parser.parse(code)
+        impl_entries = [c for c in result["classes"] if c["kind"] == "impl"]
+        assert len(impl_entries) == 1
+        impl_block = impl_entries[0]
+        assert impl_block["name"] == "impl Point"
+        assert "new" in impl_block["methods"]
+        assert "distance" in impl_block["methods"]
+        assert "impl Point" not in result["main_code"]
+
 
 class TestTypeScriptParser:
     def setup_method(self):
@@ -155,6 +180,21 @@ class TestTypeScriptParser:
         result = self.parser.parse(code)
         assert result["functions"][0]["name"] == "greet"
         assert result["functions"][0]["args"] == ["user"]
+
+    def test_class_fields_not_treated_as_methods(self):
+        code = (
+            "class User {\n"
+            "    name: string;\n"
+            "    age: number = 0;\n"
+            "    greet() { return this.name; }\n"
+            "}\n"
+        )
+        result = self.parser.parse(code)
+        assert len(result["classes"]) == 1
+        cls = result["classes"][0]
+        assert "greet" in cls["methods"]
+        assert "name" not in cls["methods"]
+        assert "age" not in cls["methods"]
 
     def test_parse_exported_interface_and_function(self):
         code = (

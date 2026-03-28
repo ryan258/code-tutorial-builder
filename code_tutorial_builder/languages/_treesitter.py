@@ -16,6 +16,7 @@ _KIND_MAP = {
     "type_declaration": "type",
     "struct_item": "struct",
     "enum_item": "enum",
+    "impl_item": "impl",
 }
 
 
@@ -151,7 +152,11 @@ class TreeSitterParser:
 
     def _parse_class(self, node, source: bytes, source_node=None) -> Dict[str, Any]:
         source_node = source_node or node
-        name_node = node.child_by_field_name("name")
+        name_node = (
+            node.child_by_field_name("name")
+            # Rust impl_item: the implemented type is in the "type" field
+            or node.child_by_field_name("type")
+        )
         # For Go type_declaration, name is nested: type_declaration > type_spec > name
         if name_node is None:
             for child in node.named_children:
@@ -160,6 +165,9 @@ class TreeSitterParser:
                     break
 
         name = self._node_text(name_node, source) if name_node else "unknown"
+        # Disambiguate Rust impl blocks from their struct/enum definition
+        if node.type == "impl_item":
+            name = f"impl {name}"
 
         # Find methods inside the class body
         method_types = set(self.profile.method_node_types)

@@ -28,6 +28,9 @@ dev = [
 [project.scripts]
 code-tutorial-builder = "code_tutorial_builder.__main__:main"
 
+[tool.setuptools.packages.find]
+include = ["code_tutorial_builder*"]
+
 [tool.setuptools.package-data]
 code_tutorial_builder = ["templates/*.j2"]
 

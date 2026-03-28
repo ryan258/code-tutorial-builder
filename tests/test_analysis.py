@@ -78,6 +78,30 @@ class TestDetectConcepts:
         concepts = _detect_concepts(body, "factorial", profile)
         assert "recursion" not in concepts
 
+    def test_no_false_positive_recursion_from_single_line_definition(self):
+        profile = get_profile("python")
+        body = "def factorial(n): return 1"
+        concepts = _detect_concepts(body, "factorial", profile)
+        assert "recursion" not in concepts
+
+    def test_no_false_positive_recursion_from_single_line_async_definition(self):
+        profile = get_profile("python")
+        body = "async def factorial(n): return 1"
+        concepts = _detect_concepts(body, "factorial", profile)
+        assert "recursion" not in concepts
+
+    def test_no_false_positive_recursion_from_brace_function_with_object_default(self):
+        profile = get_profile("javascript")
+        body = "function factorial(n = { count: 1 }) { return 1 }"
+        concepts = _detect_concepts(body, "factorial", profile)
+        assert "recursion" not in concepts
+
+    def test_detects_error_handling_with_punctuation_keyword(self):
+        profile = get_profile("rust")
+        body = "fn read_file(path: &str) -> Result<String> {\n    let s = std::fs::read_to_string(path)?;\n    Ok(s)\n}"
+        concepts = _detect_concepts(body, "read_file", profile)
+        assert "error handling" in concepts
+
 
 class TestTopologicalSort:
     def test_simple_chain(self):

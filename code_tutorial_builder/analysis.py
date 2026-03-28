@@ -258,8 +258,15 @@ def _detect_concepts(
         concepts.append("control flow")
 
     # Error handling
-    kw = "|".join(re.escape(k) for k in profile.error_keywords)
-    if re.search(rf"\b({kw})\b", sanitized_body):
+    word_kws = [k for k in profile.error_keywords if re.fullmatch(r"\w+", k)]
+    punct_kws = [k for k in profile.error_keywords if not re.fullmatch(r"\w+", k)]
+    found_error = False
+    if word_kws:
+        pat = "|".join(re.escape(k) for k in word_kws)
+        found_error = bool(re.search(rf"\b({pat})\b", sanitized_body))
+    if not found_error and punct_kws:
+        found_error = any(k in sanitized_body for k in punct_kws)
+    if found_error:
         concepts.append("error handling")
 
     # State management
@@ -276,9 +283,89 @@ _NON_CODE_RE = re.compile(
 )
 
 
+def _find_top_level_brace(body: str) -> int | None:
+    paren_depth = 0
+    bracket_depth = 0
+    brace_depth = 0
+    quote: str | None = None
+    escaped = False
+    i = 0
+
+    while i < len(body):
+        ch = body[i]
+
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = None
+            i += 1
+            continue
+
+        if ch in {'"', "'", "`"}:
+            quote = ch
+        elif ch == "/" and i + 1 < len(body):
+            nxt = body[i + 1]
+            if nxt == "/":
+                break
+            if nxt == "*":
+                i += 2
+                while i + 1 < len(body) and not (
+                    body[i] == "*" and body[i + 1] == "/"
+                ):
+                    i += 1
+                i += 2
+                continue
+        elif ch == "(":
+            paren_depth += 1
+        elif ch == ")" and paren_depth:
+            paren_depth -= 1
+        elif ch == "[":
+            bracket_depth += 1
+        elif ch == "]" and bracket_depth:
+            bracket_depth -= 1
+        elif ch == "{":
+            if paren_depth == 0 and bracket_depth == 0 and brace_depth == 0:
+                return i
+            brace_depth += 1
+        elif ch == "}" and brace_depth:
+            brace_depth -= 1
+
+        i += 1
+
+    return None
+
+
 def _analysis_text(body: str, *, skip_signature: bool = False) -> str:
-    lines = body.split("\n")
-    text = "\n".join(lines[1:]) if skip_signature and len(lines) > 1 else body
+    text = body
+    if skip_signature:
+        if "\n" in body:
+            text = body.split("\n", 1)[1]
+        else:
+            stripped = body.lstrip()
+            if stripped.startswith(("async def ", "def ", "class ")):
+                match = re.match(
+                    r"^\s*(?:async\s+def|def)\s+[A-Za-z_][A-Za-z0-9_]*\s*\(.*\)\s*"
+                    r"(?:->\s*[^:]+)?\s*:\s*",
+                    body,
+                )
+                if match is None:
+                    match = re.match(
+                        r"^\s*class\s+[A-Za-z_][A-Za-z0-9_]*"
+                        r"(?:\s*\(.*\))?\s*:\s*",
+                        body,
+                    )
+                if match is not None:
+                    text = body[match.end():]
+            elif "{" in body:
+                # In brace-based languages, skip the first top-level body brace
+                # instead of the first literal "{", which may appear in
+                # parameter defaults or string literals.
+                brace_index = _find_top_level_brace(body)
+                if brace_index is not None:
+                    text = body[brace_index + 1:]
     return _NON_CODE_RE.sub(" ", text)
 
 

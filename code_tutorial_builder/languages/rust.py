@@ -25,9 +25,9 @@ profile = LanguageProfile(
     branch_keywords=("if", "else", "match"),
     error_keywords=("Result", "Option", "unwrap", "expect", "panic", "?"),
     function_node_types=("function_item",),
-    class_node_types=("struct_item", "enum_item"),
+    class_node_types=("struct_item", "enum_item", "impl_item"),
     import_node_types=("use_declaration",),
-    method_node_types=(),  # Rust impl blocks are separate top-level items
+    method_node_types=("function_item",),
 )
 
 register(profile)
