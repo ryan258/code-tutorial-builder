@@ -11,9 +11,9 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
-from jinja2 import Environment, FileSystemLoader, Template
+from jinja2 import Environment, FileSystemLoader
 
 from .ai import OpenRouterClient, build_openrouter_client
 from .analysis import ProgramAnalysis, analyze
@@ -57,7 +57,7 @@ class TutorialGenerator:
         extension_challenge = self._build_extension_challenge(parsed_code, profile, graph)
         recap_points = self._build_recap_points(steps)
         lesson_stats = self._build_lesson_stats(parsed_code, profile, steps, graph)
-        dependency_map = self._build_dependency_map(graph)
+        dependency_map = self._build_dependency_map(graph) if graph.has_dependencies else []
 
         template_name = {
             "handout": "handout.md.j2",
@@ -325,7 +325,7 @@ class TutorialGenerator:
         graph: ProgramAnalysis,
     ) -> str:
         names = [c.name for c in graph.components]
-        if names:
+        if graph.has_dependencies and names:
             pieces = self._join_with_and([f"`{n}`" for n in names[:3]])
             return (
                 f"Every piece is in place. This final section connects"
@@ -694,6 +694,10 @@ class TutorialGenerator:
     # ------------------------------------------------------------------
 
     def _build_complete_program(self, parsed_code: ParseResult) -> str:
+        source = parsed_code.get("source")
+        if source is not None:
+            return source.rstrip("\n")
+
         parts: list[str] = []
         if parsed_code.get("imports"):
             parts.append("\n".join(parsed_code["imports"]))
@@ -839,7 +843,7 @@ class TutorialGenerator:
                 f"Describe how each {profile.class_noun} groups"
                 " responsibilities and manages state."
             )
-        if len(graph.call_graph) > 1:
+        if graph.has_dependencies:
             goals.append(
                 "Explain how components depend on one another by following"
                 " the call chain."
@@ -879,7 +883,7 @@ class TutorialGenerator:
                 f" from what it does ({profile.method_noun}s) so"
                 " object-oriented structure feels less abstract."
             )
-        if len(graph.call_graph) > 1:
+        if graph.has_dependencies:
             tips.append(
                 "Use the dependency map to show students the order in which"
                 " pieces build on each other."
@@ -911,7 +915,7 @@ class TutorialGenerator:
                 f" `{first_named['name']}` were removed?",
             )
 
-        if len(graph.call_graph) > 1:
+        if graph.has_dependencies:
             questions.append(
                 "Trace the dependency chain from the first function to the"
                 " last. What order do they need to be called in?"

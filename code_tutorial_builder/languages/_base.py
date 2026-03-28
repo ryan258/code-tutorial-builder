@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Protocol, TypedDict
 
 
-class ParseResult(TypedDict):
+class _ParseResultBase(TypedDict):
     """Normalized structure returned by every language parser."""
 
     functions: List[Dict[str, Any]]
@@ -12,6 +12,12 @@ class ParseResult(TypedDict):
     imports: List[str]
     main_code: str
     language: str
+
+
+class ParseResult(_ParseResultBase, total=False):
+    """Normalized structure returned by every language parser."""
+
+    source: str
 
 
 @dataclass(frozen=True)
@@ -46,6 +52,7 @@ class LanguageProfile:
     class_node_types: tuple[str, ...] = ()
     import_node_types: tuple[str, ...] = ()
     method_node_types: tuple[str, ...] = ()
+    non_code_node_types: tuple[str, ...] = ()
 
 
 class BaseParser(Protocol):

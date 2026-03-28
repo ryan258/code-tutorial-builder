@@ -273,6 +273,19 @@ class TestTutorialGenerator:
         assert "def greet(name):" in tutorial
         assert "print(greet('Ada'))" in tutorial
 
+    def test_complete_program_preserves_original_source_order(self):
+        code = (
+            "class Greeter:\n"
+            "    pass\n"
+            "\n"
+            "def helper():\n"
+            "    return 1\n"
+        )
+        parsed = self.parser.parse(code)
+        tutorial = self.generator.generate(parsed, title="Complete Order")
+
+        assert code.strip() in tutorial
+
     def test_dependency_map_in_output(self):
         code = (
             "def helper():\n"
@@ -286,6 +299,21 @@ class TestTutorialGenerator:
         assert "How the Pieces Connect" in tutorial
         assert "| `helper` |" in tutorial
         assert "| `caller` |" in tutorial
+
+    def test_dependency_sections_omitted_when_components_are_independent(self):
+        code = (
+            "class Greeter:\n"
+            "    pass\n"
+            "\n"
+            "def helper():\n"
+            "    return 1\n"
+        )
+        parsed = self.parser.parse(code)
+        tutorial = self.generator.generate(parsed, title="Independent")
+
+        assert "How the Pieces Connect" not in tutorial
+        assert "follow the call chain" not in tutorial
+        assert "Trace the dependency chain" not in tutorial
 
     def test_at_a_glance_reads_like_teacher_planning_notes(self):
         code = (
@@ -345,3 +373,16 @@ class TestTutorialGenerator:
         assert "calling `compute`" in tutorial
         # print should NOT appear as a top-level call to trace
         assert "calling `print`" not in tutorial
+
+    def test_module_docstring_does_not_become_main_execution(self):
+        code = (
+            '"""Module docs."""\n'
+            "\n"
+            "def greet():\n"
+            "    pass\n"
+        )
+        parsed = self.parser.parse(code)
+        tutorial = self.generator.generate(parsed, title="Docstrings")
+
+        assert "### Step 2: Main Execution" not in tutorial
+        assert code.strip() in tutorial

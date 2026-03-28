@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ast
-from typing import Any, Dict, List
+from typing import Any
 
 from ._base import ParseResult
 
@@ -16,8 +16,8 @@ class PythonParser:
             raise ValueError(f"Invalid Python syntax: {e}")
 
         lines = code.split('\n')
-        functions: list[Dict[str, Any]] = []
-        classes: list[Dict[str, Any]] = []
+        functions: list[dict[str, Any]] = []
+        classes: list[dict[str, Any]] = []
         imports: list[str] = []
         occupied: set[int] = set()
 
@@ -30,6 +30,8 @@ class PythonParser:
                 self._mark_occupied(node, occupied)
             elif isinstance(node, (ast.Import, ast.ImportFrom)):
                 imports.append(self._extract_source(node, lines))
+                self._mark_occupied(node, occupied)
+            elif self._is_docstring_expr(node):
                 self._mark_occupied(node, occupied)
 
         main_lines = []
@@ -46,6 +48,7 @@ class PythonParser:
             'imports': imports,
             'main_code': '\n'.join(main_lines),
             'language': 'python',
+            'source': code,
         }
 
     @staticmethod
@@ -61,7 +64,15 @@ class PythonParser:
     def _extract_source(node: ast.AST, lines: list[str]) -> str:
         return '\n'.join(lines[node.lineno - 1 : node.end_lineno])
 
-    def _parse_function(self, node: ast.FunctionDef, lines: list[str]) -> Dict[str, Any]:
+    @staticmethod
+    def _is_docstring_expr(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Expr)
+            and isinstance(getattr(node, "value", None), ast.Constant)
+            and isinstance(node.value.value, str)
+        )
+
+    def _parse_function(self, node: ast.FunctionDef, lines: list[str]) -> dict[str, Any]:
         return {
             'name': node.name,
             'body': self._extract_source(node, lines),
@@ -70,7 +81,7 @@ class PythonParser:
             'source_line': node.lineno,
         }
 
-    def _parse_class(self, node: ast.ClassDef, lines: list[str]) -> Dict[str, Any]:
+    def _parse_class(self, node: ast.ClassDef, lines: list[str]) -> dict[str, Any]:
         methods = [
             item.name
             for item in node.body

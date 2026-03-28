@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from .languages._base import LanguageProfile, ParseResult
 
@@ -23,6 +23,7 @@ class Component:
     calls: list[str] = field(default_factory=list)
     called_by: list[str] = field(default_factory=list)
     concepts: list[str] = field(default_factory=list)
+    source_line: int = 0
 
 
 @dataclass
@@ -41,40 +42,34 @@ class ProgramAnalysis:
                 return c
         return None
 
+    @property
+    def dependency_edge_count(self) -> int:
+        return sum(len(deps) for deps in self.call_graph.values())
+
+    @property
+    def has_dependencies(self) -> bool:
+        return self.dependency_edge_count > 0
+
 
 def analyze(parsed: ParseResult, profile: LanguageProfile) -> ProgramAnalysis:
     """Analyze parsed code to build a dependency graph and detect concepts."""
     defined_names: set[str] = set()
     components: list[Component] = []
-    component_map: dict[str, dict[str, Any]] = {}
+    ordered_items = _ordered_components(parsed)
 
-    for func in parsed.get("functions", []):
-        defined_names.add(func["name"])
-        component_map[func["name"]] = func
-    for cls in parsed.get("classes", []):
-        defined_names.add(cls["name"])
-        component_map[cls["name"]] = cls
+    for _, _, _, item in ordered_items:
+        defined_names.add(item["name"])
 
-    for func in parsed.get("functions", []):
-        calls = _find_calls(func["body"], func["name"], defined_names, profile)
-        concepts = _detect_concepts(func["body"], func["name"], profile)
+    for source_line, _, kind, item in ordered_items:
+        calls = _find_calls(item["body"], item["name"], defined_names)
+        concepts = _detect_concepts(item["body"], item["name"], profile)
         components.append(Component(
-            name=func["name"],
-            kind="function",
-            body=func["body"],
+            name=item["name"],
+            kind=kind,
+            body=item["body"],
             calls=calls,
             concepts=concepts,
-        ))
-
-    for cls in parsed.get("classes", []):
-        calls = _find_calls(cls["body"], cls["name"], defined_names, profile)
-        concepts = _detect_concepts(cls["body"], cls["name"], profile)
-        components.append(Component(
-            name=cls["name"],
-            kind="class",
-            body=cls["body"],
-            calls=calls,
-            concepts=concepts,
+            source_line=source_line,
         ))
 
     # Build forward and reverse call graphs
@@ -111,17 +106,15 @@ def _find_calls(
     body: str,
     own_name: str,
     defined: set[str],
-    profile: LanguageProfile,
 ) -> list[str]:
     """Find references to other defined components in a code body."""
-    lines = body.split("\n")
-    search_text = "\n".join(lines[1:]) if len(lines) > 1 else ""
+    search_text = _analysis_text(body, skip_signature=True)
 
     refs: set[str] = set()
     for name in defined:
         if name == own_name:
             continue
-        if re.search(rf"\b{re.escape(name)}\b", search_text):
+        if re.search(rf"\b{re.escape(name)}\s*\(", search_text):
             refs.add(name)
 
     return sorted(refs)
@@ -137,31 +130,76 @@ def _detect_concepts(
 
     # Recursion
     if name:
-        lines = body.split("\n")
-        search_text = "\n".join(lines[1:]) if len(lines) > 1 else ""
+        search_text = _analysis_text(body, skip_signature=True)
         if re.search(rf"\b{re.escape(name)}\s*\(", search_text):
             concepts.append("recursion")
 
+    sanitized_body = _analysis_text(body)
+
     # Iteration
     kw = "|".join(re.escape(k) for k in profile.iteration_keywords)
-    if re.search(rf"\b({kw})\b", body):
+    if re.search(rf"\b({kw})\b", sanitized_body):
         concepts.append("iteration")
 
     # Control flow
     kw = "|".join(re.escape(k) for k in profile.branch_keywords)
-    if re.search(rf"\b({kw})\b", body):
+    if re.search(rf"\b({kw})\b", sanitized_body):
         concepts.append("control flow")
 
     # Error handling
     kw = "|".join(re.escape(k) for k in profile.error_keywords)
-    if re.search(rf"\b({kw})\b", body):
+    if re.search(rf"\b({kw})\b", sanitized_body):
         concepts.append("error handling")
 
     # State management
-    if profile.state_tokens and any(tok in body for tok in profile.state_tokens):
+    if profile.state_tokens and any(tok in sanitized_body for tok in profile.state_tokens):
         concepts.append("state management")
 
     return concepts
+
+
+_NON_CODE_RE = re.compile(
+    r'("""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'|"(?:\\.|[^"\\])*"|'
+    r"'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|//[^\n]*|/\*[\s\S]*?\*/|"
+    r"#!?\[[^\n]*\]|#(?!\[|!\[)[^\n]*)"
+)
+
+
+def _analysis_text(body: str, *, skip_signature: bool = False) -> str:
+    lines = body.split("\n")
+    text = "\n".join(lines[1:]) if skip_signature and len(lines) > 1 else body
+    return _NON_CODE_RE.sub(" ", text)
+
+
+def _ordered_components(
+    parsed: ParseResult,
+) -> list[tuple[int, int, str, dict[str, Any]]]:
+    ordered: list[tuple[int, int, str, dict[str, Any]]] = []
+    fallback_line = 10**9
+
+    for index, func in enumerate(parsed.get("functions", [])):
+        ordered.append(
+            (
+                func.get("source_line", fallback_line + index),
+                index,
+                "function",
+                func,
+            )
+        )
+
+    function_count = len(parsed.get("functions", []))
+    for index, cls in enumerate(parsed.get("classes", [])):
+        ordered.append(
+            (
+                cls.get("source_line", fallback_line + function_count + index),
+                function_count + index,
+                "class",
+                cls,
+            )
+        )
+
+    ordered.sort(key=lambda item: (item[0], item[1]))
+    return ordered
 
 
 def _topological_sort(

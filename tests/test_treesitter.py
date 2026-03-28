@@ -1,6 +1,9 @@
 import pytest
 
-ts = pytest.importorskip("tree_sitter", reason="tree-sitter not installed")
+pytest.importorskip(
+    "tree_sitter_language_pack",
+    reason="tree-sitter language pack not installed",
+)
 
 
 from code_tutorial_builder.languages import get_parser
@@ -103,6 +106,11 @@ class TestGoParser:
         result = self.parser.parse(code)
         assert len(result["imports"]) == 1
         assert "fmt" in result["imports"][0]
+
+    def test_package_clause_excluded_from_main_code(self):
+        code = "package main\n\nfunc greet() {}\n"
+        result = self.parser.parse(code)
+        assert "package main" not in result["main_code"]
 
 
 class TestRustParser:

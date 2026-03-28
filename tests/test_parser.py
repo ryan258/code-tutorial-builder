@@ -99,6 +99,16 @@ class TestPythonParser:
         result = self.parser.parse(code)
         assert result['functions'][0]['docstring'] == 'Say hello.'
 
+    def test_module_docstring_excluded_from_main_code(self):
+        code = (
+            '"""Module docs."""\n'
+            "\n"
+            "def greet():\n"
+            "    pass\n"
+        )
+        result = self.parser.parse(code)
+        assert result["main_code"] == ""
+
     def test_source_line_metadata(self):
         code = (
             "class Greeter:\n"
@@ -114,3 +124,8 @@ class TestPythonParser:
     def test_language_field(self):
         result = self.parser.parse("x = 1\n")
         assert result['language'] == 'python'
+
+    def test_source_preserved(self):
+        code = "x = 1\n"
+        result = self.parser.parse(code)
+        assert result["source"] == code

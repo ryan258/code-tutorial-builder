@@ -40,6 +40,7 @@ class TreeSitterParser:
         func_types = set(self.profile.function_node_types)
         class_types = set(self.profile.class_node_types)
         import_types = set(self.profile.import_node_types)
+        non_code_types = set(self.profile.non_code_node_types)
 
         for node, source_node in self._iter_toplevel_nodes(tree.root_node):
             if node.type in func_types:
@@ -52,6 +53,9 @@ class TreeSitterParser:
 
             elif node.type in import_types:
                 imports.append(self._node_text(source_node, source))
+                self._mark_occupied(source_node, occupied)
+
+            elif node.type in non_code_types:
                 self._mark_occupied(source_node, occupied)
 
         # Main code: lines not inside any extracted node
@@ -70,6 +74,7 @@ class TreeSitterParser:
             "imports": imports,
             "main_code": "\n".join(main_lines),
             "language": self.profile.name,
+            "source": code,
         }
 
     # ------------------------------------------------------------------

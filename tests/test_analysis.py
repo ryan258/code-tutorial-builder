@@ -12,29 +12,31 @@ from code_tutorial_builder.languages import PythonParser, get_profile
 
 class TestFindCalls:
     def test_finds_call_to_defined_function(self):
-        profile = get_profile("python")
         defined = {"helper", "process"}
         body = "def process(data):\n    return helper(data)"
-        calls = _find_calls(body, "process", defined, profile)
+        calls = _find_calls(body, "process", defined)
         assert calls == ["helper"]
 
     def test_ignores_self_calls(self):
-        profile = get_profile("python")
         defined = {"factorial"}
         body = "def factorial(n):\n    return n * factorial(n - 1)"
-        calls = _find_calls(body, "factorial", defined, profile)
+        calls = _find_calls(body, "factorial", defined)
         assert calls == []
 
     def test_ignores_undefined_names(self):
-        profile = get_profile("python")
         defined = {"helper"}
         body = "def process():\n    return unknown() + helper()"
-        calls = _find_calls(body, "process", defined, profile)
+        calls = _find_calls(body, "process", defined)
         assert calls == ["helper"]
 
     def test_empty_body(self):
-        profile = get_profile("python")
-        calls = _find_calls("def f():\n    pass", "f", set(), profile)
+        calls = _find_calls("def f():\n    pass", "f", set())
+        assert calls == []
+
+    def test_ignores_bare_name_mentions_in_strings(self):
+        defined = {"helper", "caller"}
+        body = 'def caller():\n    return "helper"'
+        calls = _find_calls(body, "caller", defined)
         assert calls == []
 
 
@@ -178,3 +180,15 @@ class TestAnalyze:
         parsed = self.parser.parse("x = 1\n")
         result = analyze(parsed, self.profile)
         assert result.get_component("nonexistent") is None
+
+    def test_dependency_order_preserves_source_order_for_independent_mixed_items(self):
+        code = (
+            "class Greeter:\n"
+            "    pass\n"
+            "\n"
+            "def helper():\n"
+            "    return 1\n"
+        )
+        parsed = self.parser.parse(code)
+        result = analyze(parsed, self.profile)
+        assert result.dependency_order == ["Greeter", "helper"]

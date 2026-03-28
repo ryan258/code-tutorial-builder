@@ -28,6 +28,7 @@ profile = LanguageProfile(
     class_node_types=("type_declaration",),
     import_node_types=("import_declaration",),
     method_node_types=(),
+    non_code_node_types=("package_clause",),
 )
 
 register(profile)
