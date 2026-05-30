@@ -21,6 +21,8 @@ profile = LanguageProfile(
         "Ok", "Err", "Some", "None",
     ),
     state_tokens=("self.", "Self"),
+    constructor_names=("new",),
+    member_call_prefixes=("self",),
     iteration_keywords=("for", "while", "loop", "iter", "into_iter"),
     branch_keywords=("if", "else", "match"),
     error_keywords=("Result", "Option", "unwrap", "expect", "panic", "?"),

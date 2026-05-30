@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Optional
 
-from ._base import LanguageProfile, BaseParser
+from ._base import BaseParser, LanguageProfile
 
 LANGUAGES: dict = {}
 _EXTENSION_MAP: dict = {}

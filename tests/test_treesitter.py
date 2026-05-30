@@ -83,6 +83,64 @@ class TestJavaScriptParser:
         assert result["functions"][0]["source_line"] == 5
 
 
+class TestJavaScriptArrowFunctions:
+    def setup_method(self):
+        self.parser = get_parser("javascript")
+
+    def test_single_arrow_function_extracted_with_keyword(self):
+        code = "const greet = (name) => name;\ngreet('x');\n"
+        result = self.parser.parse(code)
+        assert len(result["functions"]) == 1
+        fn = result["functions"][0]
+        assert fn["name"] == "greet"
+        assert fn["args"] == ["name"]
+        # The snippet keeps the full statement, including `const`.
+        assert fn["body"] == "const greet = (name) => name;"
+        assert "const greet" not in result["main_code"]
+        assert "greet('x');" in result["main_code"]
+
+    def test_single_param_arrow_without_parens(self):
+        code = "const square = x => x * x;\n"
+        result = self.parser.parse(code)
+        assert len(result["functions"]) == 1
+        assert result["functions"][0]["name"] == "square"
+        assert result["functions"][0]["args"] == ["x"]
+
+    def test_function_expression_extracted(self):
+        code = "const run = function (a, b) { return a + b; };\n"
+        result = self.parser.parse(code)
+        assert len(result["functions"]) == 1
+        assert result["functions"][0]["name"] == "run"
+        assert result["functions"][0]["args"] == ["a", "b"]
+
+    def test_multi_declarator_all_functions_left_in_main_code(self):
+        # Bindings share a source line; we cannot emit a faithful per-binding
+        # snippet, so the whole declaration stays in main_code untouched.
+        code = "const a = () => 1, b = () => 2;\n"
+        result = self.parser.parse(code)
+        assert result["functions"] == []
+        assert "const a = () => 1, b = () => 2;" in result["main_code"]
+
+    def test_mixed_declarator_does_not_drop_siblings(self):
+        # The function binding must not be extracted at the cost of erasing the
+        # sibling `result = helper()` from main_code.
+        code = "const helper = () => 1, result = helper();\nconsole.log(result);\n"
+        result = self.parser.parse(code)
+        assert result["functions"] == []
+        assert "const helper = () => 1, result = helper();" in result["main_code"]
+        assert "console.log(result);" in result["main_code"]
+
+    def test_non_function_const_stays_in_main_code(self):
+        code = "const config = { x: 1 };\n"
+        result = self.parser.parse(code)
+        assert result["functions"] == []
+        assert "const config" in result["main_code"]
+
+    def test_malformed_source_raises(self):
+        with pytest.raises(ValueError, match="Invalid JavaScript syntax"):
+            self.parser.parse("function broken( {\n")
+
+
 class TestGoParser:
     def setup_method(self):
         self.parser = get_parser("go")

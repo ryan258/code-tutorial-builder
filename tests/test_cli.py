@@ -8,7 +8,6 @@ import pytest
 from click.testing import CliRunner
 from code_tutorial_builder.__main__ import cli
 
-
 _has_tree_sitter = importlib.util.find_spec("tree_sitter_language_pack") is not None
 
 

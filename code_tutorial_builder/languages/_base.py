@@ -43,12 +43,24 @@ class LanguageProfile:
     # Language-aware heuristics for the generator
     builtin_calls: tuple[str, ...] = ()
     state_tokens: tuple[str, ...] = ()
+    # Method names treated as a class's constructor when splitting a large
+    # class into per-method steps (e.g. "__init__", "constructor", "new").
+    # A method whose name equals the class name is also treated as the
+    # constructor, covering Java-style constructors.
+    constructor_names: tuple[str, ...] = ("__init__",)
+    # Prefixes used to call a sibling method on the instance, e.g. "self"
+    # in Python/Rust or "this" in JS/TS/Java. Empty for languages with no
+    # uniform receiver token (e.g. Go's named receivers).
+    member_call_prefixes: tuple[str, ...] = ("self",)
     iteration_keywords: tuple[str, ...] = ("for", "while")
     branch_keywords: tuple[str, ...] = ("if", "switch", "match")
     error_keywords: tuple[str, ...] = ("try", "catch", "except")
 
     # Tree-sitter node types for parsing (empty for Python which uses ast)
     function_node_types: tuple[str, ...] = ()
+    # Statement node types that may bind a function to a name, e.g. JS/TS
+    # `const f = () => {}` (lexical_declaration / variable_declaration).
+    variable_node_types: tuple[str, ...] = ()
     class_node_types: tuple[str, ...] = ()
     import_node_types: tuple[str, ...] = ()
     method_node_types: tuple[str, ...] = ()

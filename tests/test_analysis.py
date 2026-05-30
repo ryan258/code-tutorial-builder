@@ -1,11 +1,10 @@
-import pytest
 from code_tutorial_builder.analysis import (
     Component,
     ProgramAnalysis,
-    analyze,
-    _find_calls,
     _detect_concepts,
+    _find_calls,
     _topological_sort,
+    analyze,
 )
 from code_tutorial_builder.languages import PythonParser, get_profile
 

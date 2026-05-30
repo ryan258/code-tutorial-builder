@@ -16,7 +16,7 @@ It:
 4. Splits large classes into per-method steps so students learn one method at a time.
 5. Finds simple programming ideas, like loops, control flow, recursion, and error handling.
 6. Builds a Markdown lesson from that information.
-7. Archives every generated lesson in the `outputs/` folder, grouped by project and title.
+7. Archives the lesson in the `outputs/` folder (grouped by project and title) when it can detect a project root near the input file; otherwise it tells you the lesson was not archived.
 
 The final lesson can include:
 
@@ -418,6 +418,23 @@ python -m code_tutorial_builder generate -i example.py -o lesson.md --ai
 - The default model can be changed with `OPENROUTER_MODEL`.
 - The system looks for `.env` files near the source path and current folder.
 
+### What AI mode sends (data flow)
+
+When you pass `--ai`, the tool sends each step's **source code**, title, and
+description to the configured OpenRouter endpoint so it can rewrite the prose.
+Do not use `--ai` on code you cannot share with a third-party API.
+
+For safety, the endpoint is locked down:
+
+- `OPENROUTER_BASE_URL` (the destination for your code) is **only** read from
+  the process environment. From the CLI, that means you must export it in your
+  shell; an auto-discovered `.env` in a parent folder can provide an API key
+  but **cannot** redirect your code to a different endpoint. (The Python API's
+  `load_openrouter_settings(env_file=...)` also honors a `.env` you pass
+  explicitly, but the CLI has no such flag.)
+- If `OPENROUTER_BASE_URL` points anywhere other than the default OpenRouter
+  host, the tool prints a warning naming the destination before sending.
+
 ## Common Commands
 
 ### Show help
@@ -518,6 +535,9 @@ python -m pytest tests/test_cli.py tests/test_scanner.py
 - A file with too many unrelated ideas may make a weaker lesson.
 - Classes with more than 4 methods are split into per-method steps. Increase `--steps` for large files.
 - The output archive detects the project name automatically. If no project root is found, archiving is skipped.
+- Dependency analysis between components is heuristic: calls are detected with regular expressions, so dynamically-bound or reflective calls may be missed.
+- Class splitting and constructor/member-call detection rely on per-language profile heuristics (e.g. `this`/`self` prefixes, constructor names). Unusual styles may not split cleanly.
+- AI mode (`--ai`) sends the source code of each step to the configured OpenRouter endpoint. See "What AI mode sends (data flow)" above.
 
 ## When To Use Which Command
 

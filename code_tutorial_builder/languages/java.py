@@ -20,6 +20,9 @@ profile = LanguageProfile(
         "ArrayList", "HashMap", "HashSet", "Optional",
     ),
     state_tokens=("this.",),
+    # Java constructors share the class name; that is handled by the splitter.
+    constructor_names=(),
+    member_call_prefixes=("this",),
     iteration_keywords=("for", "while", "forEach", "stream"),
     branch_keywords=("if", "else", "switch", "case"),
     error_keywords=("try", "catch", "finally", "throw", "throws"),

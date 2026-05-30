@@ -1,6 +1,6 @@
 import pytest
-from code_tutorial_builder.generator import TutorialGenerator
 from code_tutorial_builder.config import Config
+from code_tutorial_builder.generator import TutorialGenerator
 from code_tutorial_builder.languages import PythonParser
 
 

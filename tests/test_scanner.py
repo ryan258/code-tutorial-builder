@@ -1,21 +1,19 @@
 import json
 
 import pytest
-from code_tutorial_builder.scanner import (
-    LearningOpportunity,
-    ScanResult,
-    scan_project,
-    _score_file,
-    _max_dependency_depth,
-    _estimate_difficulty,
-    _generate_title,
-    _generate_rationale,
-    _walk_source_files,
-    FileAnalysis,
-    read_gitnexus_meta,
-)
 from code_tutorial_builder.analysis import Component, ProgramAnalysis, analyze
 from code_tutorial_builder.languages import PythonParser, get_profile
+from code_tutorial_builder.scanner import (
+    FileAnalysis,
+    LearningOpportunity,
+    ScanResult,
+    _estimate_difficulty,
+    _max_dependency_depth,
+    _score_file,
+    _walk_source_files,
+    read_gitnexus_meta,
+    scan_project,
+)
 
 
 class TestScanProject:
@@ -103,6 +101,81 @@ class TestScanProject:
         result = scan_project(tmp_path)
         assert result.files_scanned == 1
         assert result.files_skipped == 1
+
+
+class TestIncludeExclude:
+    def test_include_limits_to_matching_files(self, tmp_path):
+        (tmp_path / "keep.py").write_text("def f():\n    return 1\n")
+        (tmp_path / "skip.py").write_text("def g():\n    return 2\n")
+
+        result = scan_project(tmp_path, include=("keep.py",))
+        assert result.files_scanned == 1
+        assert result.opportunities[0].file_path == "keep.py"
+
+    def test_exclude_skips_matching_files(self, tmp_path):
+        (tmp_path / "keep.py").write_text("def f():\n    return 1\n")
+        (tmp_path / "drop.py").write_text("def g():\n    return 2\n")
+
+        result = scan_project(tmp_path, exclude=("drop.py",))
+        names = [o.file_path for o in result.opportunities]
+        assert "drop.py" not in names
+        assert "keep.py" in names
+
+    def test_exclude_prunes_directories(self, tmp_path):
+        vendor = tmp_path / "vendor"
+        vendor.mkdir()
+        (vendor / "lib.py").write_text("def f():\n    return 1\n")
+        (tmp_path / "app.py").write_text("def g():\n    return 2\n")
+
+        result = scan_project(tmp_path, exclude=("vendor",))
+        names = [o.file_path for o in result.opportunities]
+        assert all(not n.startswith("vendor/") for n in names)
+        assert "app.py" in names
+
+    def test_include_glob_matches_subdirs(self, tmp_path):
+        sub = tmp_path / "src"
+        sub.mkdir()
+        (sub / "mod.py").write_text("def f():\n    return 1\n")
+        (tmp_path / "top.py").write_text("def g():\n    return 2\n")
+
+        result = scan_project(tmp_path, include=("src/*.py",))
+        assert result.files_scanned == 1
+        assert result.opportunities[0].file_path == "src/mod.py"
+
+
+class TestTestFileDemotion:
+    def _make_analysis(self, path, code):
+        parser = PythonParser()
+        profile = get_profile("python")
+        parsed = parser.parse(code)
+        graph = analyze(parsed, profile)
+        return FileAnalysis(
+            path=path,
+            language="python",
+            parsed=parsed,
+            graph=graph,
+            profile=profile,
+        )
+
+    def test_test_named_file_scores_lower(self, tmp_path):
+        code = (
+            "def f(n):\n"
+            "    if n == 0:\n"
+            "        return 1\n"
+            "    return n * f(n - 1)\n"
+        )
+        prod = self._make_analysis(tmp_path / "calc.py", code)
+        test = self._make_analysis(tmp_path / "test_calc.py", code)
+        prod_opp = _score_file(prod, tmp_path)
+        test_opp = _score_file(test, tmp_path)
+        assert test_opp.score < prod_opp.score
+
+    def test_file_in_tests_dir_is_demoted(self, tmp_path):
+        from code_tutorial_builder.scanner import _is_test_file
+
+        assert _is_test_file(tmp_path / "tests" / "mod.py", tmp_path) is True
+        assert _is_test_file(tmp_path / "src" / "mod.py", tmp_path) is False
+        assert _is_test_file(tmp_path / "mod_test.py", tmp_path) is True
 
 
 class TestScoring:

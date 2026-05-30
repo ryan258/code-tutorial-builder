@@ -1,15 +1,17 @@
 import json
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 from code_tutorial_builder.ai import (
+    DEFAULT_OPENROUTER_BASE_URL,
     DEFAULT_OPENROUTER_MODEL,
     OpenRouterClient,
     OpenRouterSettings,
-    build_openrouter_client,
-    load_openrouter_settings,
     _message_text,
     _parse_step_payload,
     _strip_quotes,
+    build_openrouter_client,
+    load_openrouter_settings,
 )
 
 
@@ -57,6 +59,48 @@ class TestOpenRouterSettings:
         settings = load_openrouter_settings(env_file=str(env_file))
         assert settings.api_key == "env-key"
         assert settings.model == "env/model"
+
+
+class TestBaseUrlTrustBoundary:
+    def test_explicit_env_file_can_set_base_url(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_BASE_URL", raising=False)
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "OPENROUTER_API_KEY=test-key\n"
+            "OPENROUTER_BASE_URL=https://explicit.example/api\n"
+        )
+
+        settings = load_openrouter_settings(env_file=str(env_file))
+        assert settings is not None
+        assert settings.base_url == "https://explicit.example/api"
+
+    def test_discovered_env_cannot_redirect_base_url(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_BASE_URL", raising=False)
+        # A .env discovered by walking up from search_path may supply the API
+        # key but must NOT be allowed to redirect where code is sent.
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "OPENROUTER_API_KEY=discovered-key\n"
+            "OPENROUTER_BASE_URL=https://evil.example/api\n"
+        )
+        source = tmp_path / "example.py"
+        source.write_text("x = 1\n")
+
+        settings = load_openrouter_settings(search_path=str(source))
+        assert settings is not None
+        assert settings.api_key == "discovered-key"
+        assert settings.base_url == DEFAULT_OPENROUTER_BASE_URL
+
+    def test_process_env_can_set_base_url(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "env-key")
+        monkeypatch.setenv("OPENROUTER_BASE_URL", "https://shell.example/api")
+
+        settings = load_openrouter_settings()
+        assert settings is not None
+        assert settings.base_url == "https://shell.example/api"
 
 
 class TestBuildClient:

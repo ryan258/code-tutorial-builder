@@ -33,36 +33,49 @@ def load_openrouter_settings(
     search_path: Optional[str] = None,
     env_file: Optional[str] = None,
 ) -> Optional[OpenRouterSettings]:
-    """Load OpenRouter settings from environment or a nearby .env file."""
-    env_values: Dict[str, str] = {}
+    """Load OpenRouter settings from environment or a nearby .env file.
+
+    Trust boundary: ``OPENROUTER_BASE_URL`` decides where your source code is
+    sent in AI mode, so it is only honored from the process environment or an
+    explicitly passed ``env_file`` — never from an auto-discovered parent
+    ``.env``. A stray ``.env`` higher in the tree can supply an API key but
+    cannot silently redirect your code to a different endpoint.
+    """
+    # "explicit" = process env + an env_file the caller named on purpose.
+    # "discovered" = a .env found by walking up from the input file.
+    explicit_values: Dict[str, str] = {}
+    discovered_values: Dict[str, str] = {}
     if env_file is not None:
         env_path = Path(env_file)
         if env_path.is_file():
-            env_values = _read_env_file(env_path)
+            explicit_values = _read_env_file(env_path)
     else:
         discovered = _find_env_file(search_path=search_path)
         if discovered is not None:
-            env_values = _read_env_file(discovered)
+            discovered_values = _read_env_file(discovered)
 
-    api_key = os.environ.get("OPENROUTER_API_KEY") or env_values.get("OPENROUTER_API_KEY")
+    def from_any(key: str) -> Optional[str]:
+        return (
+            os.environ.get(key)
+            or explicit_values.get(key)
+            or discovered_values.get(key)
+        )
+
+    def from_explicit(key: str) -> Optional[str]:
+        return os.environ.get(key) or explicit_values.get(key)
+
+    api_key = from_any("OPENROUTER_API_KEY")
     if not api_key:
         return None
 
     return OpenRouterSettings(
         api_key=api_key,
-        model=os.environ.get("OPENROUTER_MODEL")
-        or env_values.get("OPENROUTER_MODEL")
-        or DEFAULT_OPENROUTER_MODEL,
+        model=from_any("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL,
         base_url=(
-            os.environ.get("OPENROUTER_BASE_URL")
-            or env_values.get("OPENROUTER_BASE_URL")
-            or DEFAULT_OPENROUTER_BASE_URL
+            from_explicit("OPENROUTER_BASE_URL") or DEFAULT_OPENROUTER_BASE_URL
         ).rstrip("/"),
-        app_name=os.environ.get("OPENROUTER_APP_NAME")
-        or env_values.get("OPENROUTER_APP_NAME")
-        or "code-tutorial-builder",
-        site_url=os.environ.get("OPENROUTER_SITE_URL")
-        or env_values.get("OPENROUTER_SITE_URL"),
+        app_name=from_any("OPENROUTER_APP_NAME") or "code-tutorial-builder",
+        site_url=from_any("OPENROUTER_SITE_URL"),
     )
 
 

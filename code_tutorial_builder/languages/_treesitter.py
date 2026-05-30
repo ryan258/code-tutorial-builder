@@ -4,7 +4,7 @@ This module is only imported when a non-Python file is parsed.
 tree-sitter and tree-sitter-language-pack must be installed.
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ._base import LanguageProfile, ParseResult
 
@@ -27,11 +27,17 @@ class TreeSitterParser:
         import tree_sitter_language_pack as tslp
 
         self.profile = profile
-        self._parser = tslp.get_parser(profile.tree_sitter_name)
+        self._parser = tslp.get_parser(profile.tree_sitter_name)  # type: ignore[arg-type]
 
     def parse(self, code: str) -> ParseResult:
         source = code.encode("utf-8")
         tree = self._parser.parse(source)
+
+        if tree.root_node.has_error:
+            raise ValueError(
+                f"Invalid {self.profile.display_name} syntax: "
+                "the source could not be parsed cleanly."
+            )
 
         functions: List[Dict[str, Any]] = []
         classes: List[Dict[str, Any]] = []
@@ -39,6 +45,7 @@ class TreeSitterParser:
         occupied: set = set()
 
         func_types = set(self.profile.function_node_types)
+        var_types = set(self.profile.variable_node_types)
         class_types = set(self.profile.class_node_types)
         import_types = set(self.profile.import_node_types)
         non_code_types = set(self.profile.non_code_node_types)
@@ -47,6 +54,13 @@ class TreeSitterParser:
             if node.type in func_types:
                 functions.append(self._parse_function(node, source, source_node))
                 self._mark_occupied(source_node, occupied)
+
+            elif node.type in var_types:
+                # e.g. `const f = () => {}` — only counts if it binds a function.
+                var_funcs = self._parse_variable_functions(node, source, source_node)
+                if var_funcs:
+                    functions.extend(var_funcs)
+                    self._mark_occupied(source_node, occupied)
 
             elif node.type in class_types:
                 classes.append(self._parse_class(node, source, source_node))
@@ -149,6 +163,58 @@ class TreeSitterParser:
             "docstring": self._extract_doc_comment(source_node, source),
             "source_line": source_node.start_point.row + 1,
         }
+
+    _FUNCTION_VALUE_TYPES = {
+        "arrow_function",
+        "function",
+        "function_expression",
+        "generator_function",
+    }
+
+    def _parse_variable_functions(
+        self, node, source: bytes, source_node
+    ) -> List[Dict[str, Any]]:
+        """Extract a function-valued variable binding, e.g. `const f = () => {}`.
+
+        Only single-declarator statements are extracted, using the whole
+        statement (with its `const`/`let`/`export` keywords) as the snippet.
+        Multi-declarator statements like `const a = () => 1, b = () => 2;` are
+        left in ``main_code`` untouched: the bindings share a source line, so
+        there is no way to emit a valid, faithful per-binding snippet without
+        fabricating declarations students never wrote.
+        """
+        declarators = [
+            c for c in node.named_children if c.type == "variable_declarator"
+        ]
+        if len(declarators) != 1:
+            return []
+
+        declarator = declarators[0]
+        value = declarator.child_by_field_name("value")
+        if value is None or value.type not in self._FUNCTION_VALUE_TYPES:
+            return []
+
+        name_node = declarator.child_by_field_name("name")
+        name = self._node_text(name_node, source) if name_node else "anonymous"
+
+        params_node = (
+            value.child_by_field_name("parameters")
+            or value.child_by_field_name("formal_parameters")
+        )
+        if params_node is not None:
+            args = self._extract_param_names(params_node, source)
+        else:
+            # Single-parameter arrow: `x => ...`
+            single = value.child_by_field_name("parameter")
+            args = [self._node_text(single, source)] if single else []
+
+        return [{
+            "name": name,
+            "body": self._node_text(source_node, source),
+            "args": args,
+            "docstring": self._extract_doc_comment(source_node, source),
+            "source_line": declarator.start_point.row + 1,
+        }]
 
     def _parse_class(self, node, source: bytes, source_node=None) -> Dict[str, Any]:
         source_node = source_node or node

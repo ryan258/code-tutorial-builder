@@ -52,31 +52,49 @@ class PythonParser:
         }
 
     @staticmethod
-    def _mark_occupied(node: ast.AST, occupied: set[int]) -> None:
+    def _mark_occupied(node: ast.stmt, occupied: set[int]) -> None:
         start = node.lineno - 1
-        if hasattr(node, 'decorator_list') and node.decorator_list:
-            start = node.decorator_list[0].lineno - 1
-        end = node.end_lineno
+        decorators = getattr(node, 'decorator_list', None)
+        if decorators:
+            start = decorators[0].lineno - 1
+        end = node.end_lineno if node.end_lineno is not None else node.lineno
         for line_no in range(start, end):
             occupied.add(line_no)
 
     @staticmethod
-    def _extract_source(node: ast.AST, lines: list[str]) -> str:
-        return '\n'.join(lines[node.lineno - 1 : node.end_lineno])
+    def _extract_source(node: ast.stmt, lines: list[str]) -> str:
+        start = node.lineno
+        decorators = getattr(node, 'decorator_list', None)
+        if decorators:
+            start = decorators[0].lineno
+        return '\n'.join(lines[start - 1 : node.end_lineno])
 
     @staticmethod
-    def _is_docstring_expr(node: ast.AST) -> bool:
-        return (
-            isinstance(node, ast.Expr)
-            and isinstance(getattr(node, "value", None), ast.Constant)
-            and isinstance(node.value.value, str)
-        )
+    def _extract_args(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+        a = node.args
+        names: list[str] = [arg.arg for arg in getattr(a, 'posonlyargs', [])]
+        names += [arg.arg for arg in a.args]
+        if a.vararg is not None:
+            names.append('*' + a.vararg.arg)
+        names += [arg.arg for arg in a.kwonlyargs]
+        if a.kwarg is not None:
+            names.append('**' + a.kwarg.arg)
+        return names
 
-    def _parse_function(self, node: ast.FunctionDef, lines: list[str]) -> dict[str, Any]:
+    @staticmethod
+    def _is_docstring_expr(node: ast.stmt) -> bool:
+        if not isinstance(node, ast.Expr):
+            return False
+        value = node.value
+        return isinstance(value, ast.Constant) and isinstance(value.value, str)
+
+    def _parse_function(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef, lines: list[str]
+    ) -> dict[str, Any]:
         return {
             'name': node.name,
             'body': self._extract_source(node, lines),
-            'args': [arg.arg for arg in node.args.args],
+            'args': self._extract_args(node),
             'docstring': ast.get_docstring(node),
             'source_line': node.lineno,
         }

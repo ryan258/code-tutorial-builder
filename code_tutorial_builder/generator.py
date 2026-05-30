@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 from jinja2 import Environment, FileSystemLoader
 
-from .ai import OpenRouterClient, build_openrouter_client
+from .ai import DEFAULT_OPENROUTER_BASE_URL, OpenRouterClient, build_openrouter_client
 from .analysis import ProgramAnalysis, analyze
 from .config import Config
 from .languages import get_profile
@@ -109,7 +109,29 @@ class TutorialGenerator:
             raise ValueError(
                 "AI mode requires OPENROUTER_API_KEY in a .env file or environment."
             )
+        self._warn_if_external_endpoint(client)
         return client.rewrite_steps(language=language, steps=steps)
+
+    @staticmethod
+    def _warn_if_external_endpoint(client: OpenRouterClient) -> None:
+        """AI mode sends each step's source code to the configured endpoint.
+
+        Disclose when that endpoint is not the default OpenRouter host, so a
+        custom OPENROUTER_BASE_URL can't silently exfiltrate code unnoticed.
+        """
+        import warnings
+        from urllib.parse import urlsplit
+
+        settings = getattr(client, "settings", None)
+        endpoint = getattr(settings, "base_url", "").rstrip("/")
+        if not endpoint or endpoint == DEFAULT_OPENROUTER_BASE_URL:
+            return
+        host = urlsplit(endpoint).netloc or endpoint
+        warnings.warn(
+            f"AI mode is sending your source code to a non-default endpoint "
+            f"({host}). Only set OPENROUTER_BASE_URL to providers you trust.",
+            stacklevel=2,
+        )
 
     # ------------------------------------------------------------------
     # Step creation — dependency-ordered, incremental
@@ -733,7 +755,6 @@ class TutorialGenerator:
     def _class_intro_key_points(
         self, step: dict[str, Any], profile: LanguageProfile,
     ) -> list[str]:
-        cls_name = step.get("parent_class", step["name"])
         methods = step.get("methods") or []
         points: list[str] = []
         if methods:
@@ -745,7 +766,7 @@ class TutorialGenerator:
             tok in step["code"] for tok in profile.state_tokens
         ):
             points.append(
-                f"The constructor sets up state that the other methods will read and modify."
+                "The constructor sets up state that the other methods will read and modify."
             )
         uses = step.get("uses", [])
         if uses:
@@ -753,7 +774,7 @@ class TutorialGenerator:
                 f"Depends on: {self._join_with_and([f'`{u}`' for u in uses])}."
             )
         points.append(
-            f"This step introduces the class — the methods follow in the next steps."
+            "This step introduces the class — the methods follow in the next steps."
         )
         return points
 

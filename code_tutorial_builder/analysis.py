@@ -157,24 +157,23 @@ def _split_class(
     method_details: list[dict] = cls_dict.get("method_details", [])
     method_names = {m["name"] for m in method_details}
 
-    # --- Class intro: class declaration + __init__ ---
+    # --- Class intro: real class declaration header + constructor ---
     init_method = None
     rest_methods: list[dict] = []
     for md in method_details:
-        if md["name"] == "__init__":
+        if init_method is None and _is_constructor(md["name"], class_name, profile):
             init_method = md
         else:
             rest_methods.append(md)
 
+    header = _class_header(item["body"], method_details)
     if init_method:
-        intro_body = f"class {class_name}:\n{init_method['body']}"
-        intro_methods_shown = ["__init__"]
+        intro_body = f"{header}\n{init_method['body']}"
+        intro_name = f"{class_name}.{init_method['name']}"
     else:
-        # No __init__; show just the class line
-        intro_body = f"class {class_name}:\n    ..."
-        intro_methods_shown = []
+        intro_body = header
+        intro_name = class_name
 
-    intro_name = f"{class_name}.__init__" if init_method else class_name
     intro_concepts = _detect_concepts(intro_body, class_name, profile)
 
     sub_components: list[Component] = [
@@ -194,7 +193,7 @@ def _split_class(
         method_qname = f"{class_name}.{md['name']}"
         # Detect calls: self.method() calls to siblings + calls to external names
         body = md["body"]
-        calls = _find_method_calls(body, md["name"], method_names, class_name)
+        calls = _find_method_calls(body, md["name"], method_names, class_name, profile)
         calls.extend(
             c for c in _find_calls(body, md["name"], defined_names)
             if c not in calls
@@ -214,19 +213,51 @@ def _split_class(
     return sub_components
 
 
+def _is_constructor(method_name: str, class_name: str, profile: LanguageProfile) -> bool:
+    """A method is the constructor if it matches a known constructor name for
+    the language, or (for Java-style languages) shares the class name."""
+    return method_name in profile.constructor_names or method_name == class_name
+
+
+def _class_header(class_body: str, method_details: list[dict]) -> str:
+    """Extract the real class declaration header from the source.
+
+    Returns everything in the class body up to the first method, so the intro
+    keeps the language's actual syntax (bases, generics, opening brace) instead
+    of a synthesized Python-only ``class X:`` line.
+    """
+    earliest: int | None = None
+    for md in method_details:
+        idx = class_body.find(md["body"])
+        if idx > 0 and (earliest is None or idx < earliest):
+            earliest = idx
+    if earliest is not None:
+        return class_body[:earliest].rstrip()
+    return class_body.split("\n", 1)[0].rstrip()
+
+
 def _find_method_calls(
     body: str,
     own_name: str,
     sibling_names: set[str],
     class_name: str,
+    profile: LanguageProfile,
 ) -> list[str]:
-    """Find self.method() calls to sibling methods within the same class."""
+    """Find receiver.method() calls to sibling methods within the same class.
+
+    Uses the language's member-call prefixes (e.g. ``self`` / ``this``); for
+    languages without a uniform receiver token this finds nothing.
+    """
+    prefixes = profile.member_call_prefixes
+    if not prefixes:
+        return []
     search_text = _analysis_text(body, skip_signature=True)
+    prefix_alt = "|".join(re.escape(p) for p in prefixes)
     refs: set[str] = set()
     for name in sibling_names:
         if name == own_name:
             continue
-        if re.search(rf"self\.{re.escape(name)}\s*\(", search_text):
+        if re.search(rf"(?:{prefix_alt})\.{re.escape(name)}\s*\(", search_text):
             refs.add(f"{class_name}.{name}")
     return sorted(refs)
 
@@ -342,7 +373,13 @@ def _analysis_text(body: str, *, skip_signature: bool = False) -> str:
     text = body
     if skip_signature:
         if "\n" in body:
-            text = body.split("\n", 1)[1]
+            # Drop leading decorator/annotation lines, then the signature line,
+            # so neither leaks into call/recursion detection.
+            body_lines = body.split("\n")
+            idx = 0
+            while idx < len(body_lines) and body_lines[idx].lstrip().startswith("@"):
+                idx += 1
+            text = "\n".join(body_lines[idx + 1:])
         else:
             stripped = body.lstrip()
             if stripped.startswith(("async def ", "def ", "class ")):

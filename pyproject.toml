@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -21,6 +21,9 @@ multilang = [
 ]
 dev = [
     "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.6",
+    "mypy>=1.8",
     "tree-sitter>=0.23",
     "tree-sitter-language-pack>=0.23",
 ]
@@ -36,3 +39,30 @@ code_tutorial_builder = ["templates/*.j2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["code_tutorial_builder", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+# E501 (line length) is left to judgement rather than enforced in CI.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Language modules are imported purely to trigger registration side effects.
+"code_tutorial_builder/languages/__init__.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+[tool.coverage.run]
+source = ["code_tutorial_builder"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true

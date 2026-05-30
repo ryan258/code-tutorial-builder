@@ -9,15 +9,14 @@ from __future__ import annotations
 
 import json
 import logging
-import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Optional
 
 from .analysis import ProgramAnalysis, analyze
 from .languages._base import LanguageProfile, ParseResult
 from .languages._registry import (
-    LANGUAGES,
     _EXTENSION_MAP,
     detect_language,
     get_parser,
@@ -131,6 +130,8 @@ def scan_project(
     *,
     max_opportunities: int = 10,
     max_file_lines: int = 500,
+    include: tuple[str, ...] = (),
+    exclude: tuple[str, ...] = (),
 ) -> ScanResult:
     """Scan a project directory and return ranked learning opportunities.
 
@@ -143,6 +144,10 @@ def scan_project(
     max_file_lines:
         Skip files longer than this — they're usually too complex for a
         single lesson.
+    include:
+        Glob patterns; when non-empty, only files matching one are scanned.
+    exclude:
+        Glob patterns; matching files and directories are skipped.
     """
     root = Path(root).resolve()
     if not root.is_dir():
@@ -154,7 +159,9 @@ def scan_project(
     analyses: list[FileAnalysis] = []
     skipped = 0
 
-    for source_file in _walk_source_files(root, supported_extensions):
+    for source_file in _walk_source_files(
+        root, supported_extensions, include=include, exclude=exclude,
+    ):
         language = detect_language(str(source_file))
         if language is None:
             skipped += 1
@@ -215,15 +222,26 @@ def scan_project(
 def _walk_source_files(
     root: Path,
     extensions: set[str],
-    _visited: set[int] | None = None,
+    *,
+    include: tuple[str, ...] = (),
+    exclude: tuple[str, ...] = (),
+    _root: Path | None = None,
+    _visited: set[tuple[int, int]] | None = None,
 ) -> list[Path]:
     """Walk root recursively, yielding source files with supported extensions.
 
     Tracks visited directories by device+inode to avoid symlink loops and
     skips symlinked directories entirely to stay within the project root.
+
+    ``include``/``exclude`` are glob patterns matched (via fnmatch) against both
+    the path relative to the top-level root and the bare filename. When
+    ``include`` is non-empty a file must match at least one include pattern;
+    any match against ``exclude`` drops the file (or prunes the directory).
     """
     if _visited is None:
         _visited = set()
+    if _root is None:
+        _root = root
 
     try:
         stat = root.stat()
@@ -234,17 +252,50 @@ def _walk_source_files(
         return []
     _visited.add(ident)
 
+    try:
+        entries = sorted(root.iterdir())
+    except OSError as exc:
+        # A single unreadable directory (permissions, races) shouldn't abort
+        # the whole scan — skip it and keep going.
+        logger.debug("Skipping unreadable directory %s: %s", root, exc)
+        return []
+
     results: list[Path] = []
-    for item in sorted(root.iterdir()):
+    for item in entries:
         if item.is_dir():
             if item.is_symlink():
                 continue
             if item.name in _SKIP_DIRS or item.name.endswith(".egg-info"):
                 continue
-            results.extend(_walk_source_files(item, extensions, _visited))
+            if _matches_any(item, _root, exclude):
+                continue
+            results.extend(_walk_source_files(
+                item, extensions,
+                include=include, exclude=exclude,
+                _root=_root, _visited=_visited,
+            ))
         elif item.is_file() and item.suffix.lower() in extensions:
+            if _matches_any(item, _root, exclude):
+                continue
+            if include and not _matches_any(item, _root, include):
+                continue
             results.append(item)
     return results
+
+
+def _matches_any(path: Path, root: Path, patterns: tuple[str, ...]) -> bool:
+    """True if path matches any glob pattern, tested against its root-relative
+    path and its bare name."""
+    if not patterns:
+        return False
+    try:
+        rel = path.relative_to(root).as_posix()
+    except ValueError:
+        rel = path.name
+    name = path.name
+    return any(
+        fnmatch(rel, pat) or fnmatch(name, pat) for pat in patterns
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -257,6 +308,28 @@ _W_DEPENDENCIES = 0.25
 _W_SIZE = 0.20
 _W_SELF_CONTAINED = 0.15
 _W_PROGRESSIVE = 0.10
+
+
+_TEST_FILE_PENALTY = 0.4
+_TEST_DIR_NAMES = {"test", "tests", "__tests__", "spec", "specs", "testing"}
+_TEST_NAME_GLOBS = (
+    "test_*", "*_test", "*_tests", "*_spec",
+    "*.test.*", "*.spec.*",
+)
+
+
+def _is_test_file(path: Path, root: Path) -> bool:
+    """Heuristically decide whether a file is test/spec code so it can be
+    demoted in rankings. Matches common naming conventions and test dirs."""
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        rel = path
+    if any(part.lower() in _TEST_DIR_NAMES for part in rel.parts[:-1]):
+        return True
+    stem = path.stem.lower()
+    name = path.name.lower()
+    return any(fnmatch(stem, pat) or fnmatch(name, pat) for pat in _TEST_NAME_GLOBS)
 
 
 def _score_file(analysis: FileAnalysis, root: Path) -> LearningOpportunity:
@@ -306,6 +379,11 @@ def _score_file(analysis: FileAnalysis, root: Path) -> LearningOpportunity:
         + _W_SELF_CONTAINED * self_contained_score
         + _W_PROGRESSIVE * progressive_score
     )
+
+    # Test files are real code but rarely the thing a student wants taught,
+    # so demote them rather than dropping them outright.
+    if _is_test_file(analysis.path, root):
+        score *= _TEST_FILE_PENALTY
 
     # Build the opportunity
     rel_path = str(analysis.path.relative_to(root))

@@ -20,6 +20,10 @@ profile = LanguageProfile(
         "recover", "fmt", "log", "errors",
     ),
     state_tokens=(),
+    # Go has no constructors and uses named receivers, so neither uniform
+    # constructor names nor a shared receiver prefix apply.
+    constructor_names=(),
+    member_call_prefixes=(),
     iteration_keywords=("for", "range"),
     branch_keywords=("if", "else", "switch", "case", "select"),
     error_keywords=("error", "panic", "recover", "defer"),

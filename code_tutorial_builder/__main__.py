@@ -1,11 +1,10 @@
 import re
 import shlex
-import shutil
 from pathlib import Path
 
 import click
 
-from .config import Config, VALID_FORMATS
+from .config import VALID_FORMATS, Config
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _OUTPUTS_DIR = _PROJECT_ROOT / "outputs"
@@ -102,11 +101,23 @@ def generate(input_file, output_file, steps, template, title, language, output_f
             click.echo(f"Tutorial generated at {output_file}")
 
         # Save a copy to the outputs archive
-        archive_path = _save_to_outputs(
-            input_file, lesson_title, output_format, tutorial,
-        )
-        if archive_path and verbose:
-            click.echo(f"Archived to {archive_path}")
+        try:
+            archive_path = _save_to_outputs(
+                input_file, lesson_title, output_format, tutorial,
+            )
+        except OSError as exc:
+            click.echo(
+                f"Warning: could not archive lesson to outputs/: {exc}", err=True
+            )
+        else:
+            if archive_path:
+                if verbose:
+                    click.echo(f"Archived to {archive_path}")
+            elif verbose:
+                click.echo(
+                    "Note: lesson not archived (no project root detected "
+                    "near the input file)."
+                )
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1)
@@ -123,9 +134,13 @@ def generate(input_file, output_file, steps, template, title, language, output_f
               help='Maximum number of opportunities to return (1-10)')
 @click.option('--max-lines', default=500,
               help='Skip files longer than this many lines')
+@click.option('--include', multiple=True,
+              help='Only scan files matching this glob (repeatable)')
+@click.option('--exclude', multiple=True,
+              help='Skip files/dirs matching this glob (repeatable)')
 @click.option('--json', 'as_json', is_flag=True, help='Output as JSON')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def scan(directory, max_opportunities, max_lines, as_json, verbose):
+def scan(directory, max_opportunities, max_lines, include, exclude, as_json, verbose):
     """Scan a project directory for learning opportunities.
 
     Walks DIRECTORY (default: current directory), parses all supported source
@@ -142,6 +157,8 @@ def scan(directory, max_opportunities, max_lines, as_json, verbose):
             directory,
             max_opportunities=max_opportunities,
             max_file_lines=max_lines,
+            include=tuple(include),
+            exclude=tuple(exclude),
         )
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
@@ -233,21 +250,21 @@ def _save_to_outputs(
 ) -> str | None:
     """Save a copy of the generated tutorial to the outputs archive.
 
-    Returns the archive path on success, or None if it couldn't be saved.
+    Returns the archive path on success, or None when archiving is skipped
+    because no recognizable project root was found near the input file.
+    Raises OSError if the write itself fails, so the caller can report it
+    instead of silently pretending the lesson was archived.
     """
-    try:
-        project = _guess_project_name(input_file)
-        if project is None:
-            return None
-        title_slug = _slugify(lesson_title)
-        group_dir = _OUTPUTS_DIR / f"{project}--{title_slug}"
-        group_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"{project}--{title_slug}-{output_format}.md"
-        dest = group_dir / filename
-        dest.write_text(content, encoding="utf-8")
-        return str(dest)
-    except OSError:
+    project = _guess_project_name(input_file)
+    if project is None:
         return None
+    title_slug = _slugify(lesson_title)
+    group_dir = _OUTPUTS_DIR / f"{project}--{title_slug}"
+    group_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{project}--{title_slug}-{output_format}.md"
+    dest = group_dir / filename
+    dest.write_text(content, encoding="utf-8")
+    return str(dest)
 
 
 def _score_to_stars(score: float) -> str:
